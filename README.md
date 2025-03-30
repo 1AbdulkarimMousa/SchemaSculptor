@@ -87,6 +87,8 @@ Key variables used by the Makefile:
 
 Key variables used by the auth pkg:
 
+| Variable | Description |
+|----------|-------------|
 | SMTP_HOST | SMTP Mail Provide host 
 | SMTP_PORT | SMTP Mail Provide port 
 | SMTP_USER | eMail User  
