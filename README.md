@@ -1,6 +1,18 @@
-# Environment-Aware Makefile
+# Introduction
 
-This README explains how to use the environment-aware Makefile for the Valutoria application. The Makefile simplifies common development tasks while using environment variables from your `.env` file.
+Throughout my career, I’ve worked on many projects and encountered a wide range of authentication methods, queue implementations, and message broker technologies across different programming languages. I’ve explored various ways to interact with databases—from hardcoding queries to complex query builders, safe ORMs, escaping techniques for preventing injection attacks, and basic driver setups. As a result, my technical debt has become quite significant, almost like Mount Everest. To stay future-proof and avoid the hassle of maintaining multiple versions of the same implementation across different technologies (a lesson learned from managing my technical debt), I’ve decided to focus on Golang and PostgreSQL moving forward. While I have respect for C++ and Rust, I find Golang to be the most appealing choice for my future projects.
+
+In the SchemaSculptor project, I plan to fuse the finest pieces of code I've crafted over the years to create the most efficient and maintainable design pattern imaginable. My aim is to build a project that completely bypasses the "fire triangle" of fuel, oxygen, and spark—avoiding the pitfalls of pointers, memory leaks, and unoptimized algorithms/excessive complexity.
+
+SchemaSculptor aims to return the responsibility of data algorithms to PostgreSQL. This means we’re left facing challenges like pointers and memory leaks, i.e., the fuel and the spark. The project is designed to leverage an SQL compiler, `sqlc`, to ensure the compiled code doesn't have leaks. As a result, we eliminate the risk of sparks igniting the fuels, i.e., memory leakage.
+
+Don’t get me wrong; I have a genuine appreciation for memory management. However, as more people get involved in the project, constantly chasing pointers becomes impractical, especially when there are very experienced people from different domains, each having his or her own way of memory management.
+
+As a result, implementers will be able to focus more on solving business logic challenges in the most elegant way, without being overly concerned about the underlying technology. This approach aims to minimize technical debt as much as possible.
+
+That being said, embracing the Unix philosophy of "one tool for one task" leads to easier code maintenance. This approach reduces the fear of switching companies every two years, as it minimizes technical debt and allows developers to move confidently without being bogged down by complex systems.
+
+Finally, as LLM coding models gain traction in the industry, SchemaSculptor aims to provide guidance. With implementor supervision and automation, it will deliver high-quality backend technology that outperforms every data application on the market.
 
 ## Prerequisites
 
