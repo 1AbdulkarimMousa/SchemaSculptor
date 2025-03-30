@@ -84,6 +84,12 @@ Key variables used by the Makefile:
 | DB_PASS | Database password | db-setup, load-schema |
 | HTTP_IP | Server IP | run |
 | HTTP_PORT | Server port | run |
+| SMTP_HOST | SMTP Mail Provide host | run |
+| SMTP_PORT | SMTP Mail Provide port | run |
+| SMTP_USER | eMail User  | run |
+| SMTP_PASS | eMail Password | run |
+
+
 
 ## Best Practices
 
