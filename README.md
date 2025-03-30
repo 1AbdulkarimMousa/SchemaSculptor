@@ -79,11 +79,3 @@ Key variables used by the Makefile:
 2. Keep a `.env.example` file in your repository for reference
 3. Run `make check-env` after modifying `.env` to verify your changes
 4. Use `make setup` for initial project setup or after major changes
-
-## Customizing the Makefile
-
-If you need to add new targets that depend on environment variables:
-
-1. Add them after the `.env` include line
-2. Use `$(VARIABLE_NAME)` syntax to access environment variables
-3. Add dependencies on the `.env` target for targets that require environment variables
