@@ -12,7 +12,7 @@ As a result, implementers will be able to focus more on solving business logic c
 
 That being said, embracing the Unix philosophy of "one tool for one task" leads to easier code maintenance. This approach reduces the fear of switching companies every two years, as it minimizes technical debt and allows developers to move confidently without being bogged down by complex systems.
 
-Finally, as LLM coding models gain traction in the industry, SchemaSculptor aims to provide guidance. With implementor supervision and automation, it will deliver high-quality backend technology that outperforms every data application on the market.
+Finally, as LLM coding models gain traction in the industry, and as unexperienced new prompt engineers are diverging from the clean reliable effecient maintainable approach, SchemaSculptor aims to provide guidance with better approach for prompters and experienced implementors. With implementor supervision and automation, it will deliver high-quality backend technology that outperforms every data application on the market.
 
 ## Prerequisites
 
