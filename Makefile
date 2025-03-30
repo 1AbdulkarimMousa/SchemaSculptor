@@ -10,6 +10,7 @@ db-setup:
 	echo; \
 	sudo -u postgres psql -c "CREATE ROLE $$username WITH ENCRYPTED PASSWORD '$$password';" ; \
 	sudo -u postgres psql -c "CREATE DATABASE $$dbname OWNER $$username;" ; \
+	sudo -u postgres psql -c "ALTER ROLE $$username WITH LOGIN;" ; \
 	sudo -u postgres psql -d $$dbname -c "GRANT ALL PRIVILEGES ON DATABASE $$dbname TO $$username;" ; \
 	sudo -u postgres psql -d $$dbname -c "GRANT USAGE, CREATE ON SCHEMA public TO $$username;"
 		
