@@ -123,7 +123,6 @@ func authMiddleware(maker PasetoMaker) gin.HandlerFunc {
 		fields := strings.Fields(authHeader)
 		if len(fields) != 2 {
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrInvalidBearer.Error()})
-			ctx.Redirect(302, "/login")
 			return
 		}
 
@@ -180,18 +179,6 @@ type NewPassword struct {
 	Password string `json:"password" validate:"required"`
 }
 
-// createNewVerification creates a new verification entry
-func createNewVerification(email string) *VerificationData {
-	verification := &VerificationData{
-		Code:      strconv.Itoa(int(util.RandomInt(100000, 999999))),
-		ExpiresAt: time.Now().Add(time.Hour),
-		AgainAt:   time.Now().Add(time.Minute * 2),
-		Type:      "Activation",
-	}
-	verifications[email] = *verification
-	return verification
-}
-
 // Authentication handlers
 // =====================
 
@@ -213,9 +200,9 @@ func register(ctx *gin.Context) {
 
 	// Handle existing partners
 	if exists {
-		// Need to add GetPartnerByEmail to SQLC to handle this properly
-		// For now, return error as account exists
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrAccountExists.Error()})
+		db.Querier.
+			// For now, return error as account exists
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrAccountExists.Error()})
 		return
 	}
 

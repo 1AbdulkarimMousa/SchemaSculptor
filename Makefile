@@ -41,7 +41,7 @@ install-sqlc:
 # Generate Go functions from SQL queries
 .PHONY: sqlc-generate
 sqlc-generate:
-	sqlc generate
+	sqlc generate .
 
 # Go package management
 .PHONY: go-get
