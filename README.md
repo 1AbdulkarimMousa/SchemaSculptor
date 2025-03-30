@@ -92,8 +92,6 @@ Key variables used by the auth pkg:
 | SMTP_USER | eMail User  
 | SMTP_PASS | eMail Password 
 
-
-
 ## Best Practices
 
 1. Never commit your `.env` file to version control
