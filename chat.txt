@@ -1,0 +1,510 @@
+├── auxillary.go
+
+////////////////////////////////////////////////////////////////////////////////////////
+package util
+
+import (
+	"strings"
+)
+
+func CamelCase(name *string) {
+	parts := strings.Split(*name, "_")
+	for i := range parts {
+		parts[i] = strings.Title(parts[i])
+		if parts[i] == "Id" {
+			parts[i] = "ID"
+		}
+	}
+	if parts != nil {
+		*name = strings.Join(parts, "")
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+
+├── env.go
+
+////////////////////////////////////////////////////////////////////////////////////////
+package util
+
+import (
+	"os"
+	"strconv"
+	"time"
+
+	"github.com/joho/godotenv"
+)
+
+// Configuration variables
+var (
+	// Admin
+	AdminPassword string
+
+	// Database
+	DBHost string
+	DBPort string
+	DBName string
+	DBUser string
+	DBPass string
+	DBSSl  string
+
+	// HTTP server
+	HTTPPort string
+	HTTPIP   string
+
+	// SMTP
+	SMTPHost string
+	SMTPPort string
+	SMTPUser string
+	SMTPPass string
+
+	// Paseto encryption key
+	PasetoKey string
+)
+
+// loadDotEnv loads environment variables from .env files
+func loadDotEnv(filenames ...string) error {
+	if len(filenames) == 0 {
+		return godotenv.Load()
+	}
+	return godotenv.Load(filenames...)
+}
+
+// init loads the .env file(s)
+func init() {
+	if err := loadDotEnv(); err != nil {
+		// Continue even if .env file is not found
+		// Variables can still be set through environment
+	}
+}
+
+// init initializes all configuration variables
+func init() {
+	// Admin
+	AdminPassword = GetEnv("ADMIN_PASSWORD", "")
+
+	// Database
+	DBHost = GetEnv("DB_HOST", "localhost")
+	DBPort = GetEnv("DB_PORT", "5432")
+	DBName = GetEnv("DB_NAME", "valueflow")
+	DBUser = GetEnv("DB_USER", "valueflow")
+	DBPass = GetEnv("DB_PASS", "valueflow")
+	DBSSl = GetEnv("DB_SSL", "disable")
+
+	// HTTP server
+	HTTPPort = GetEnv("HTTP_PORT", "8000")
+	HTTPIP = GetEnv("HTTP_IP", "0.0.0.0")
+
+	// SMTP
+	SMTPHost = GetEnv("SMTP_HOST", "")
+	SMTPPort = GetEnv("SMTP_PORT", "587")
+	SMTPUser = GetEnv("SMTP_USER", "")
+	SMTPPass = GetEnv("SMTP_PASS", "")
+
+	// Paseto
+	PasetoKey = GetEnv("PASETO_KEY", "")
+}
+
+// LoadEnv is a wrapper to explicitly load environment variables from specified files
+func LoadEnv(filenames ...string) error {
+	return loadDotEnv(filenames...)
+}
+
+// GetEnv retrieves an environment variable by name.
+// If the variable is not found, it returns the fallback value.
+func GetEnv(key, fallback string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return fallback
+}
+
+// GetEnvBool retrieves a boolean environment variable.
+// It returns the fallback value if the variable doesn't exist or cannot be parsed as a boolean.
+func GetEnvBool(key string, fallback bool) bool {
+	if value, exists := os.LookupEnv(key); exists {
+		if b, err := strconv.ParseBool(value); err == nil {
+			return b
+		}
+	}
+	return fallback
+}
+
+// GetEnvInt retrieves an integer environment variable.
+// It returns the fallback value if the variable doesn't exist or cannot be parsed as an integer.
+func GetEnvInt(key string, fallback int) int {
+	if value, exists := os.LookupEnv(key); exists {
+		if i, err := strconv.Atoi(value); err == nil {
+			return i
+		}
+	}
+	return fallback
+}
+
+// GetEnvFloat retrieves a float environment variable.
+// It returns the fallback value if the variable doesn't exist or cannot be parsed as a float.
+func GetEnvFloat(key string, fallback float64) float64 {
+	if value, exists := os.LookupEnv(key); exists {
+		if f, err := strconv.ParseFloat(value, 64); err == nil {
+			return f
+		}
+	}
+	return fallback
+}
+
+// GetEnvDuration retrieves a time.Duration environment variable.
+// It returns the fallback value if the variable doesn't exist or cannot be parsed as a duration.
+func GetEnvDuration(key string, fallback time.Duration) time.Duration {
+	if value, exists := os.LookupEnv(key); exists {
+		if d, err := time.ParseDuration(value); err == nil {
+			return d
+		}
+	}
+	return fallback
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+
+├── go.mod
+
+////////////////////////////////////////////////////////////////////////////////////////
+module github.com/1AbdulkarimMousa/SchemaSculptor/util
+
+go 1.18
+
+require (
+	github.com/google/uuid v1.6.0
+	github.com/joho/godotenv v1.5.1
+	github.com/mattn/go-sqlite3 v1.14.24
+	github.com/stripe/stripe-go/v81 v81.4.0
+	golang.org/x/crypto v0.11.0
+)
+
+////////////////////////////////////////////////////////////////////////////////////////
+
+├── go.sum
+
+////////////////////////////////////////////////////////////////////////////////////////
+github.com/davecgh/go-spew v1.1.0 h1:ZDRjVQ15GmhC3fiQ8ni8+OwkZQO4DARzQgrnXU1Liz8=
+github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
+github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
+github.com/joho/godotenv v1.5.1 h1:7eLL/+HRGLY0ldzfGMeQkb7vMd0as4CfYvUVzLqw0N0=
+github.com/joho/godotenv v1.5.1/go.mod h1:f4LDr5Voq0i2e/R5DDNOoa2zzDfwtkZa6DnEwAbqwq4=
+github.com/mattn/go-sqlite3 v1.14.24 h1:tpSp2G2KyMnnQu99ngJ47EIkWVmliIizyZBfPrBWDRM=
+github.com/mattn/go-sqlite3 v1.14.24/go.mod h1:Uh1q+B4BYcTPb+yiD3kU8Ct7aC0hY9fxUwlHK0RXw+Y=
+github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
+github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
+github.com/stretchr/testify v1.7.0 h1:nwc3DEeHmmLAfoZucVR881uASk0Mfjw8xYJ99tb5CcY=
+github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
+github.com/stripe/stripe-go/v81 v81.4.0 h1:AuD9XzdAvl193qUCSaLocf8H+nRopOouXhxqJUzCLbw=
+github.com/stripe/stripe-go/v81 v81.4.0/go.mod h1:C/F4jlmnGNacvYtBp/LUHCvVUJEZffFQCobkzwY1WOo=
+golang.org/x/crypto v0.11.0 h1:6Ewdq3tDic1mg5xRO4milcWCfMVQhI4NkqWWvqejpuA=
+golang.org/x/crypto v0.11.0/go.mod h1:xgJhtzW8F9jGdVFWZESrid1U1bjeNy4zgy5cRr/CIio=
+golang.org/x/net v0.0.0-20210520170846-37e1c6afe023/go.mod h1:9nx3DQGgdP8bBQD5qxJ1jj9UTztislL4KSBs9R2vV5Y=
+golang.org/x/net v0.10.0 h1:X2//UzNDwYmtCLn7To6G58Wr6f5ahEAQgKNzv9Y951M=
+golang.org/x/sys v0.0.0-20201119102817-f84b799fce68/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+golang.org/x/sys v0.0.0-20210423082822-04245dca01da/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+golang.org/x/term v0.0.0-20201126162022-7de9c90e9dd1/go.mod h1:bj7SfCRtBDWHUb9snDiAeCFNEtKQo2Wmx5Cou7ajbmo=
+golang.org/x/text v0.3.6/go.mod h1:5Zoc/QRtKVWzQhOtBMvqHzDpF6irO9z98xDceosuGiQ=
+golang.org/x/text v0.11.0 h1:LAntKIrcmeSKERyiOh0XMV39LXS8IE9UL2yP7+f5ij4=
+golang.org/x/tools v0.0.0-20180917221912-90fa682c2a6e/go.mod h1:n7NCudcB/nEzxVGmLbDWY5pfWTLqBcC2KZ6jyYvM4mQ=
+gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
+gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c h1:dUUwHk2QECo/6vqA44rthZ8ie2QXMNeKRTHCNY2nXvo=
+gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+
+////////////////////////////////////////////////////////////////////////////////////////
+
+├── incident.go
+
+////////////////////////////////////////////////////////////////////////////////////////
+package util
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"runtime"
+	"time"
+)
+
+type LogLevel int
+
+const (
+	DEBUG LogLevel = iota
+	INFO
+	WARN
+	ERROR
+	FATAL
+)
+
+func (l LogLevel) String() string {
+	return [...]string{"DEBUG", "INFO", "WARN", "ERROR", "FATAL"}[l]
+}
+
+// IncidentData represents all information captured when an incident occurs
+type IncidentData struct {
+	Timestamp  time.Time
+	Level      string
+	Message    string
+	File       string
+	Line       int
+	Function   string
+	StackTrace string
+	Data       string // JSON representation of context data
+}
+
+// IncidentReporter defines an interface that must be implemented
+// by any struct that wants to receive and store incidents
+type IncidentReporter interface {
+	ReportIncident(ctx context.Context, data IncidentData) error
+}
+
+// IncidentLogger captures incident data and passes it to a reporter
+type IncidentLogger struct {
+	reporter IncidentReporter
+}
+
+// NewIncidentLogger creates a new incident logger with the given reporter
+func NewIncidentLogger(reporter IncidentReporter) *IncidentLogger {
+	return &IncidentLogger{
+		reporter: reporter,
+	}
+}
+
+// LogIncident logs an incident using the configured reporter
+func (l *IncidentLogger) LogIncident(ctx context.Context, level LogLevel, message string, data interface{}) error {
+	// Get caller information
+	pc, file, line, _ := runtime.Caller(2)
+	fn := runtime.FuncForPC(pc)
+
+	// Convert data to JSON
+	var dataJSON string
+	if data != nil {
+		bytes, err := json.Marshal(data)
+		if err != nil {
+			dataJSON = fmt.Sprintf("Error marshaling data: %v", err)
+		} else {
+			dataJSON = string(bytes)
+		}
+	}
+
+	// Get stack trace for errors and fatals
+	var stackTrace string
+	if level >= ERROR {
+		buf := make([]byte, 4096)
+		n := runtime.Stack(buf, false)
+		stackTrace = string(buf[:n])
+	}
+
+	// Create incident data
+	incidentData := IncidentData{
+		Timestamp:  time.Now(),
+		Level:      level.String(),
+		Message:    message,
+		File:       file,
+		Line:       line,
+		Function:   fn.Name(),
+		StackTrace: stackTrace,
+		Data:       dataJSON,
+	}
+
+	// Use the reporter to store the incident
+	return l.reporter.ReportIncident(ctx, incidentData)
+}
+
+// Convenience methods
+func (l *IncidentLogger) Debug(ctx context.Context, message string, data interface{}) error {
+	return l.LogIncident(ctx, DEBUG, message, data)
+}
+
+func (l *IncidentLogger) Info(ctx context.Context, message string, data interface{}) error {
+	return l.LogIncident(ctx, INFO, message, data)
+}
+
+func (l *IncidentLogger) Warn(ctx context.Context, message string, data interface{}) error {
+	return l.LogIncident(ctx, WARN, message, data)
+}
+
+func (l *IncidentLogger) Error(ctx context.Context, message string, data interface{}) error {
+	return l.LogIncident(ctx, ERROR, message, data)
+}
+
+func (l *IncidentLogger) Fatal(ctx context.Context, message string, data interface{}) error {
+	return l.LogIncident(ctx, FATAL, message, data)
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+
+├── password.go
+
+////////////////////////////////////////////////////////////////////////////////////////
+package util
+
+import (
+	"fmt"
+
+	"golang.org/x/crypto/bcrypt"
+)
+
+//returns bcrypt hash of the password
+func Hash(password string) (string, error) {
+	HashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", fmt.Errorf("failed to hash password: %w", err)
+	}
+	return string(HashedPassword), nil
+}
+
+func RandomHash(password string) string {
+	HashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return ""
+	}
+	return string(HashedPassword)
+}
+
+//compares between a given password and a hashedPassword
+func Check(password string, hash string) error {
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+
+├── random.go
+
+////////////////////////////////////////////////////////////////////////////////////////
+package util
+
+import (
+	"math/rand"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// var constant: please don't mutate it
+var Street = []string{
+	"Avon Close",
+	"Little Lane",
+	"Thomas Street",
+	"West End",
+	"Beech Road",
+	"Sycamore Avenue",
+	"Victoria Street",
+	"Laurel Drive",
+	"St Michael's Road",
+	"Kings Road",
+}
+
+var ContactTypes = []string{
+	"customer",
+	"vendor",
+	"billing",
+	"location",
+	"company",
+}
+
+const (
+	Alphabet   = "abcdefghijklmnopqrstuvwxyz"
+	Characters = "!@#$%^&*()_+~"
+	Numbers    = "0123456789"
+)
+
+type Int int
+
+func (i Int) Str() string {
+	return strconv.Itoa(int(i))
+}
+
+func Rrndm(strings []string) string {
+	k := len(strings) - 1
+	return strings[RandomInt(0, k)]
+}
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
+
+func RandomInt(min, max int) int32 {
+	return int32(min + rand.Intn(max-min+1))
+}
+
+func RandomFloat() float64 {
+	return rand.Float64()
+}
+
+func RandomDate() time.Time {
+	t := time.Now()
+	t = t.AddDate(int(RandomInt(2, 10)), int(RandomInt(1, 10)), int(RandomInt(1, 10)))
+	loc := time.FixedZone("", 0)
+	res := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc).Round(time.Second)
+	return res
+}
+
+func RandomChar(n int) string {
+	var sb strings.Builder
+	k := len(Characters)
+
+	for i := 0; i < n; i++ {
+		c := Alphabet[rand.Intn(k)]
+		sb.WriteByte(c)
+	}
+	return sb.String()
+}
+
+func RandomStr(n int) string {
+	var sb strings.Builder
+	k := len(Alphabet)
+
+	for i := 0; i < n; i++ {
+		c := Alphabet[rand.Intn(k)]
+		sb.WriteByte(c)
+	}
+	return sb.String()
+}
+
+func RandomName(n int) string {
+	return RandomStr(6)
+}
+
+func RandomBool() bool {
+	return RandomInt(0, 1) > RandomInt(0, 1)
+}
+
+func RandomEmail() string {
+	return RandomStr(6) + "@" + RandomStr(6) + ".com"
+}
+
+func RandomPassword(min, max int) string {
+	var sb strings.Builder
+	length := RandomInt(min, max)
+	k1 := len(Alphabet)
+	k2 := len(Characters)
+
+	for i := 0; i < int(length); i++ {
+		switch fun := rand.Intn(3); fun {
+		case 0:
+			a := Alphabet[rand.Intn(k1)]
+			sb.WriteByte(a)
+		case 1:
+			a := Characters[rand.Intn(k2)]
+			sb.WriteByte(a)
+		case 2:
+			a := Numbers[rand.Intn(10)]
+			sb.WriteByte(a)
+		}
+	}
+	return sb.String()
+}
+
+// func Diff(i any, r func(...any)) {
+// 	r.
+// 	for i != r(_) {
+// 		return Diff(i )
+// 	}
+// }
+
+////////////////////////////////////////////////////////////////////////////////////////
+

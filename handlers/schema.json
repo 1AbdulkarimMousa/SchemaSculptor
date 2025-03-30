@@ -1,0 +1,388 @@
+{
+  "backup": {
+    "columns": [
+      {
+        "name": "deployment_id",
+        "nullable": false,
+        "reference": {
+          "column": "id",
+          "table": "deployment"
+        },
+        "type": "Int32"
+      },
+      {
+        "name": "schedule_id",
+        "nullable": true,
+        "reference": {
+          "column": "id",
+          "table": "backup_schedule"
+        },
+        "type": "Int32"
+      },
+      {
+        "name": "filename",
+        "nullable": false,
+        "type": "String"
+      },
+      {
+        "name": "filesize",
+        "nullable": false,
+        "type": "Int64"
+      },
+      {
+        "name": "includes_filestore",
+        "nullable": false,
+        "type": "Bool"
+      },
+      {
+        "name": "created_manually",
+        "nullable": false,
+        "type": "Bool"
+      },
+      {
+        "name": "created_at",
+        "nullable": false,
+        "type": "Time"
+      }
+    ]
+  },
+  "backup_schedule": {
+    "columns": [
+      {
+        "name": "deployment_id",
+        "nullable": false,
+        "reference": {
+          "column": "id",
+          "table": "deployment"
+        },
+        "type": "Int32"
+      },
+      {
+        "name": "type",
+        "nullable": false,
+        "type": "String"
+      },
+      {
+        "name": "day_of_week",
+        "nullable": true,
+        "type": "Int32"
+      },
+      {
+        "name": "day_of_month",
+        "nullable": true,
+        "type": "Int32"
+      },
+      {
+        "name": "hour",
+        "nullable": false,
+        "type": "Int32"
+      },
+      {
+        "name": "minute",
+        "nullable": false,
+        "type": "Int32"
+      },
+      {
+        "name": "include_filestore",
+        "nullable": false,
+        "type": "Bool"
+      },
+      {
+        "name": "retention_count",
+        "nullable": false,
+        "type": "Int32"
+      },
+      {
+        "name": "next_run",
+        "nullable": false,
+        "type": "Time"
+      },
+      {
+        "name": "last_run",
+        "nullable": true,
+        "type": "Time"
+      },
+      {
+        "name": "created_at",
+        "nullable": false,
+        "type": "Time"
+      },
+      {
+        "name": "updated_at",
+        "nullable": false,
+        "type": "Time"
+      }
+    ]
+  },
+  "deployment": {
+    "columns": [
+      {
+        "name": "active",
+        "nullable": false,
+        "type": "Bool"
+      },
+      {
+        "name": "plan",
+        "nullable": false,
+        "type": "String"
+      },
+      {
+        "name": "billing",
+        "nullable": false,
+        "type": "String"
+      },
+      {
+        "name": "partner_id",
+        "nullable": false,
+        "reference": {
+          "column": "id",
+          "table": "partner"
+        },
+        "type": "Int32"
+      },
+      {
+        "name": "db_id",
+        "nullable": true,
+        "type": "Int32"
+      },
+      {
+        "name": "domain",
+        "nullable": false,
+        "type": "String"
+      },
+      {
+        "name": "version",
+        "nullable": false,
+        "type": "Int32"
+      },
+      {
+        "name": "workers",
+        "nullable": false,
+        "type": "Int32"
+      },
+      {
+        "name": "memory",
+        "nullable": false,
+        "type": "Int32"
+      },
+      {
+        "name": "storage",
+        "nullable": false,
+        "type": "Int32"
+      },
+      {
+        "name": "cycle",
+        "nullable": false,
+        "type": "String"
+      },
+      {
+        "name": "last_backup",
+        "nullable": false,
+        "type": "Time"
+      },
+      {
+        "name": "payment_url",
+        "nullable": false,
+        "type": "String"
+      }
+    ]
+  },
+  "incident": {
+    "columns": [
+      {
+        "name": "timestamp",
+        "nullable": false,
+        "type": "Time"
+      },
+      {
+        "name": "level",
+        "nullable": false,
+        "type": "String"
+      },
+      {
+        "name": "message",
+        "nullable": false,
+        "type": "String"
+      },
+      {
+        "name": "file",
+        "nullable": false,
+        "type": "String"
+      },
+      {
+        "name": "line",
+        "nullable": false,
+        "type": "Int32"
+      },
+      {
+        "name": "function",
+        "nullable": false,
+        "type": "String"
+      },
+      {
+        "name": "stack_trace",
+        "nullable": true,
+        "type": "String"
+      },
+      {
+        "name": "data",
+        "nullable": false,
+        "type": ""
+      },
+      {
+        "name": "resolved",
+        "nullable": false,
+        "type": "Bool"
+      },
+      {
+        "name": "resolution_notes",
+        "nullable": true,
+        "type": "String"
+      },
+      {
+        "name": "resolved_at",
+        "nullable": true,
+        "type": "Time"
+      }
+    ]
+  },
+  "message": {
+    "columns": [
+      {
+        "name": "support_id",
+        "nullable": false,
+        "reference": {
+          "column": "id",
+          "table": "support"
+        },
+        "type": "Int32"
+      },
+      {
+        "name": "partner_id",
+        "nullable": false,
+        "reference": {
+          "column": "id",
+          "table": "partner"
+        },
+        "type": "Int32"
+      },
+      {
+        "name": "body",
+        "nullable": false,
+        "type": "String"
+      },
+      {
+        "name": "created_at",
+        "nullable": false,
+        "type": "Time"
+      },
+      {
+        "name": "read_at",
+        "nullable": true,
+        "type": "Time"
+      }
+    ]
+  },
+  "partner": {
+    "columns": [
+      {
+        "name": "name",
+        "nullable": false,
+        "type": "String"
+      },
+      {
+        "name": "email",
+        "nullable": false,
+        "type": "String"
+      },
+      {
+        "name": "password",
+        "nullable": false,
+        "type": "String"
+      },
+      {
+        "name": "balance",
+        "nullable": false,
+        "type": "Float64"
+      },
+      {
+        "name": "active",
+        "nullable": false,
+        "type": "Bool"
+      },
+      {
+        "name": "stripe_id",
+        "nullable": true,
+        "type": "String"
+      },
+      {
+        "name": "wise_id",
+        "nullable": true,
+        "type": "String"
+      },
+      {
+        "name": "reason",
+        "nullable": true,
+        "type": "String"
+      }
+    ]
+  },
+  "support": {
+    "columns": [
+      {
+        "name": "partner_id",
+        "nullable": false,
+        "reference": {
+          "column": "id",
+          "table": "partner"
+        },
+        "type": "Int32"
+      },
+      {
+        "name": "subject",
+        "nullable": false,
+        "type": "String"
+      },
+      {
+        "name": "body",
+        "nullable": false,
+        "type": "String"
+      },
+      {
+        "name": "status",
+        "nullable": false,
+        "type": "String"
+      },
+      {
+        "name": "priority",
+        "nullable": false,
+        "type": "String"
+      },
+      {
+        "name": "assigned_agent_id",
+        "nullable": false,
+        "type": "Int32"
+      },
+      {
+        "name": "created_at",
+        "nullable": false,
+        "type": "Time"
+      },
+      {
+        "name": "updated_at",
+        "nullable": true,
+        "type": "Time"
+      },
+      {
+        "name": "resolved_at",
+        "nullable": true,
+        "type": "Time"
+      },
+      {
+        "name": "read_at",
+        "nullable": true,
+        "type": "Time"
+      }
+    ]
+  }
+}
