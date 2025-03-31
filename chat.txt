@@ -1,20 +1,872 @@
+├── auth.go
+
+////////////////////////////////////////////////////////////////////////////////////////
+// handlers/auth.go
+package handlers
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/1AbdulkarimMousa/SchemaSculptor/db"
+	"github.com/1AbdulkarimMousa/SchemaSculptor/util"
+	"github.com/aead/chacha20poly1305"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/o1egl/paseto"
+)
+
+// Constants
+const (
+	authorizationHeaderKey        = "Authorization"
+	authorizationHeaderBearerType = "bearer"
+)
+
+// Payload represents the token payload structure
+type Payload struct {
+	ID        uuid.UUID `json:"id"`
+	PartnerID int32     `json:"partner_id"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiryAt  time.Time `json:"expiry_at"`
+}
+
+// NewPayload creates a new token payload with specified email and partner ID
+func NewPayload(email string, partnerID int32) (*Payload, error) {
+	tokenID, err := uuid.NewRandom()
+	if err != nil {
+		return nil, err
+	}
+
+	payload := &Payload{
+		ID:        tokenID,
+		PartnerID: partnerID,
+		Email:     email,
+		CreatedAt: time.Now(),
+		ExpiryAt:  time.Now().Add(time.Hour * 24),
+	}
+	return payload, nil
+}
+
+// Valid checks if the token has expired
+func (payload *Payload) Valid() error {
+	if time.Now().After(payload.ExpiryAt) {
+		return errors.New(ErrTokenExpired)
+	}
+	return nil
+}
+
+// PasetoMaker handles PASETO token creation and verification
+type PasetoMaker struct {
+	paseto       *paseto.V2
+	symmetricKey []byte
+}
+
+// NewPaseto creates a new PasetoMaker with the given symmetric key
+func NewPaseto(symmetricKey string) (*PasetoMaker, error) {
+	if len(symmetricKey) != chacha20poly1305.KeySize {
+		return nil, fmt.Errorf("SymmetricKey too short should be: %v", chacha20poly1305.KeySize)
+	}
+
+	maker := &PasetoMaker{
+		paseto:       paseto.NewV2(),
+		symmetricKey: []byte(symmetricKey),
+	}
+	return maker, nil
+}
+
+// CreateToken generates a new token for a partner
+func (maker *PasetoMaker) CreateToken(partner *db.Partner) (string, error) {
+	payload, err := NewPayload(partner.Email, partner.ID)
+	if err != nil {
+		return "", err
+	}
+	return maker.paseto.Encrypt(maker.symmetricKey, payload, nil)
+}
+
+// VerifyToken validates a token and returns its payload
+func (maker *PasetoMaker) VerifyToken(token string) (*Payload, error) {
+	payload := &Payload{}
+	err := maker.paseto.Decrypt(token, maker.symmetricKey, payload, nil)
+	if err != nil {
+		return nil, errors.New(ErrInvalidToken)
+	}
+	err = payload.Valid()
+	if err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+// Helper types and functions
+type accessKey struct {
+	AccessToken string    `json:"token"`
+	Email       string    `json:"email"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+type VerificationActivation struct {
+	Email string           `json:"email" validate:"required"`
+	Data  VerificationData `json:"verification" validate:"required"`
+}
+
+type NewPassword struct {
+	Email    string `json:"email" validate:"required"`
+	Code     string `json:"code" validate:"required"`
+	Password string `json:"password" validate:"required,min=8"`
+}
+
+// IsValidEmail checks if an email has a valid format
+func IsValidEmail(email string) bool {
+	return util.IsValidEmail(email)
+}
+
+// createNewVerification creates a new verification entry
+func createNewVerification(email string) *VerificationData {
+	verification := &VerificationData{
+		Code:      strconv.Itoa(int(util.RandomInt(100000, 999999))),
+		ExpiresAt: time.Now().Add(time.Hour),
+		AgainAt:   time.Now().Add(time.Minute * 2),
+		Type:      "Activation",
+	}
+	verifications[email] = *verification
+	return verification
+}
+
+// authMiddleware verifies the authentication token in the request
+func authMiddleware(maker PasetoMaker) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		authHeader := ctx.GetHeader(authorizationHeaderKey)
+		if authHeader == "" {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrNoHeader})
+			return
+		}
+
+		fields := strings.Fields(authHeader)
+		if len(fields) != 2 {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrInvalidBearer})
+			ctx.Redirect(http.StatusFound, "/login")
+			return
+		}
+
+		authType := strings.ToLower(fields[0])
+		if authType != authorizationHeaderBearerType {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrUnsupportedAuth})
+			return
+		}
+
+		token := fields[1]
+		payload, err := maker.VerifyToken(token)
+		if err != nil {
+			if err.Error() == ErrTokenExpired {
+				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrTokenExpired, "code": "token_expired"})
+			} else {
+				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrInvalidToken})
+			}
+			return
+		}
+
+		ctx.Set("payload", payload)
+		ctx.Next()
+	}
+}
+
+// wsAuthMiddleware handles websocket authentication via token
+func wsAuthMiddleware(maker PasetoMaker) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		token := ctx.Query("token")
+		if token == "" {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrNoHeader})
+			return
+		}
+
+		payload, err := maker.VerifyToken(token)
+		if err != nil {
+			if err.Error() == ErrTokenExpired {
+				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrTokenExpired, "code": "token_expired"})
+			} else {
+				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrInvalidToken})
+			}
+			return
+		}
+
+		ctx.Set("payload", payload)
+		ctx.Next()
+	}
+}
+
+// GetPayload retrieves partner information from context
+func GetPayload(ctx *gin.Context) (*Payload, error) {
+	payload, ok := ctx.Get("payload")
+	if !ok {
+		return nil, errors.New(ErrPayloadNotFound)
+	}
+	typedPayload, ok := payload.(*Payload)
+	if !ok {
+		return nil, errors.New(ErrInvalidPayload)
+	}
+	return typedPayload, nil
+}
+
+// changePassword updates a user's password in the database
+func changePassword(ctx context.Context, email string, newPassword string) error {
+	partner, err := queries.GetPartnerByEmail(ctx, email)
+	if err != nil {
+		return errors.New(ErrUserRetrievalFailed)
+	}
+
+	hashedPassword, err := util.Hash(newPassword)
+	if err != nil {
+		return errors.New(ErrDBHashingPassword)
+	}
+
+	changePasswordParams := db.ChangePasswordParams{
+		ID:       partner.ID,
+		Password: hashedPassword,
+	}
+
+	err = queries.ChangePassword(ctx, changePasswordParams)
+	if err != nil {
+		return errors.New(ErrDBPasswordChange)
+	}
+
+	return nil
+}
+
+// Route handlers
+// ==============
+
+// register handles new user registration
+func register(ctx *gin.Context) {
+	var newPartner db.Partner
+	if err := ctx.ShouldBindJSON(&newPartner); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
+		return
+	}
+
+	if !IsValidEmail(newPartner.Email) {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEmail})
+		return
+	}
+
+	if len(newPartner.Password) < 8 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidPasswordFormat})
+		return
+	}
+
+	exists, err := queries.CheckUserEmail(ctx, newPartner.Email)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEmailCheck})
+		return
+	}
+
+	if exists {
+		partner, err := queries.GetPartnerByEmail(ctx, newPartner.Email)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrUserRetrievalFailed})
+			return
+		}
+
+		if !partner.Active {
+			verification, exists := verifications[newPartner.Email]
+			resend := true
+
+			if exists {
+				if verification.ExpiresAt.Before(time.Now()) {
+					verification.ExpiresAt = time.Now().Add(time.Hour)
+					verification.Code = strconv.Itoa(int(util.RandomInt(100000, 999999)))
+				} else if !time.Now().After(verification.AgainAt) {
+					resend = false
+				}
+				verification.AgainAt = time.Now().Add(time.Minute * 2)
+				verifications[newPartner.Email] = verification
+			} else {
+				verification = *createNewVerification(newPartner.Email)
+			}
+
+			if resend {
+				verification.resendVerificationEmail(newPartner.Email)
+				ctx.JSON(http.StatusOK, gin.H{"message": RespVerificationRequired, "sent": true})
+			} else {
+				ctx.JSON(http.StatusOK, gin.H{"message": RespVerificationResendCooldown, "sent": false, "wait_until": verification.AgainAt})
+			}
+			return
+		}
+
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrAccountExists})
+		return
+	}
+
+	hashedPassword, err := util.Hash(newPartner.Password)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": ErrDBHashingPassword})
+		return
+	}
+
+	createPartnerParams := db.CreatePartnerParams{
+		Name:     newPartner.Name,
+		Email:    newPartner.Email,
+		Password: hashedPassword,
+		Balance:  0,
+		Active:   false,
+	}
+
+	partner, err := queries.CreatePartner(ctx, createPartnerParams)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEmailInsert})
+		return
+	}
+
+	sendVerificationEmail(&partner)
+	ctx.JSON(http.StatusOK, gin.H{"message": RespRegistrationSuccess, "email": partner.Email})
+}
+
+// login authenticates a user and provides an access token
+func login(ctx *gin.Context, tokenMaker *PasetoMaker) {
+	var credentials db.Partner
+	if err := ctx.ShouldBindJSON(&credentials); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
+		return
+	}
+
+	partner, err := queries.GetPartnerByEmail(ctx, credentials.Email)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidCredentials})
+		return
+	}
+
+	if !partner.Active {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": ErrAccountNotActive})
+		return
+	}
+
+	if err := util.Check(credentials.Password, partner.Password); err != nil {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": ErrIncorrectPassword})
+		return
+	}
+
+	accessToken, err := tokenMaker.CreateToken(&partner)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, accessKey{
+		AccessToken: accessToken,
+		Email:       partner.Email,
+		ExpiresAt:   time.Now().Add(time.Hour * 24),
+	})
+}
+
+// ActivateAccountRoute activates a newly registered account
+func ActivateAccountRoute(ctx *gin.Context, tokenMaker *PasetoMaker) {
+	var unverified VerificationActivation
+	if err := ctx.ShouldBindJSON(&unverified); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
+		return
+	}
+
+	verification, ok := verifications[unverified.Email]
+	if (!ok) || verification.Type != "Activation" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidVerification})
+		return
+	}
+
+	if verification.Code != unverified.Data.Code {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidCode})
+		return
+	}
+
+	if verification.ExpiresAt.Before(time.Now()) {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrCodeExpired})
+		return
+	}
+
+	partner, err := queries.GetPartnerByEmail(ctx, unverified.Email)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrUserRetrievalFailed})
+		return
+	}
+
+	err = queries.ActivatePartner(ctx, partner.ID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrActivationFailed})
+		return
+	}
+
+	err = queries.SetNewStripeAccount(ctx, db.SetNewStripeAccountParams{
+		ID:       partner.ID,
+		StripeID: sql.NullString{String: "", Valid: false},
+	})
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": ErrInternalServerError})
+		return
+	}
+
+	delete(verifications, unverified.Email)
+	accessToken, err := tokenMaker.CreateToken(&partner)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, accessKey{
+		AccessToken: accessToken,
+		Email:       partner.Email,
+		ExpiresAt:   time.Now().Add(time.Hour * 24),
+	})
+}
+
+// resendActivationRoute resends the activation code email
+func resendActivationRoute(ctx *gin.Context) {
+	var request db.Partner
+	if err := ctx.ShouldBindJSON(&request); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
+		return
+	}
+
+	if !IsValidEmail(request.Email) {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEmail})
+		return
+	}
+
+	exists, err := queries.CheckUserEmail(ctx, request.Email)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEmailCheck})
+		return
+	}
+
+	if !exists {
+		ctx.JSON(http.StatusOK, gin.H{"message": RespResetEmailSent, "sent": false})
+		return
+	}
+
+	partner, err := queries.GetPartnerByEmail(ctx, request.Email)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrUserRetrievalFailed})
+		return
+	}
+
+	if partner.Active {
+		ctx.JSON(http.StatusOK, gin.H{"message": RespAccountAlreadyActive, "sent": false})
+		return
+	}
+
+	verification, exists := verifications[request.Email]
+	resend := true
+
+	if exists {
+		if verification.ExpiresAt.Before(time.Now()) {
+			verification.ExpiresAt = time.Now().Add(time.Hour)
+			verification.Code = strconv.Itoa(int(util.RandomInt(100000, 999999)))
+			verification.Type = "Activation"
+		} else if !time.Now().After(verification.AgainAt) {
+			resend = false
+		}
+		verification.AgainAt = time.Now().Add(time.Minute * 2)
+		verifications[request.Email] = verification
+	} else {
+		verification = *createNewVerification(request.Email)
+	}
+
+	if resend {
+		verification.resendVerificationEmail(request.Email)
+		ctx.JSON(http.StatusOK, gin.H{"message": RespVerificationResent, "sent": true})
+	} else {
+		ctx.JSON(http.StatusOK, gin.H{"message": RespVerificationResendCooldown, "sent": false, "wait_until": verification.AgainAt})
+	}
+}
+
+// sendResetPasswordRoute sends a password reset code
+func sendResetPasswordRoute(ctx *gin.Context) {
+	var request db.Partner
+	if err := ctx.ShouldBindJSON(&request); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
+		return
+	}
+
+	if !IsValidEmail(request.Email) {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEmail})
+		return
+	}
+
+	exists, err := queries.CheckUserEmail(ctx, request.Email)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEmailCheck})
+		return
+	}
+
+	if !exists {
+		ctx.JSON(http.StatusOK, gin.H{"message": "If a user with this email exists, a password reset email has been sent.", "sent": true})
+		return
+	}
+
+	verification, exists := verifications[request.Email]
+	if exists {
+		if verification.ExpiresAt.Before(time.Now()) {
+			verification.ExpiresAt = time.Now().Add(time.Hour)
+			verification.Code = strconv.Itoa(int(util.RandomInt(100000, 999999)))
+			verification.Type = "PasswordReset"
+			verifications[request.Email] = verification
+		} else if !time.Now().After(verification.AgainAt) {
+			ctx.JSON(http.StatusOK, gin.H{"message": "Please wait before requesting another password reset email.", "sent": false, "wait_until": verification.AgainAt})
+			return
+		}
+		verification.AgainAt = time.Now().Add(time.Minute * 2)
+		verifications[request.Email] = verification
+	} else {
+		verification = VerificationData{
+			Code:      strconv.Itoa(int(util.RandomInt(100000, 999999))),
+			ExpiresAt: time.Now().Add(time.Hour),
+			AgainAt:   time.Now().Add(time.Minute * 2),
+			Type:      "PasswordReset",
+		}
+		verifications[request.Email] = verification
+	}
+
+	sendResetCodeEmail(request.Email)
+	ctx.JSON(http.StatusOK, gin.H{"message": "Password reset email sent successfully.", "sent": true})
+}
+
+// passwordResetRoute handles password reset with verification code
+func passwordResetRoute(ctx *gin.Context) {
+	var unverified NewPassword
+	if err := ctx.ShouldBindJSON(&unverified); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
+		return
+	}
+
+	if len(unverified.Password) < 8 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Password must be at least 8 characters long"})
+		return
+	}
+
+	verification, ok := verifications[unverified.Email]
+	if (!ok) || verification.Type != "PasswordReset" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidVerification})
+		return
+	}
+
+	if verification.Code != unverified.Code {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidCode})
+		return
+	}
+
+	if verification.ExpiresAt.Before(time.Now()) {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrCodeExpired})
+		return
+	}
+
+	err := changePassword(ctx, unverified.Email, unverified.Password)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
+		return
+	}
+
+	partner, err := queries.GetPartnerByEmail(ctx, unverified.Email)
+	if err == nil {
+		user := &User{Partner: partner}
+		user.sendResetPasswordEmail()
+	}
+
+	delete(verifications, unverified.Email)
+	ctx.JSON(http.StatusOK, gin.H{"message": "Password has been reset successfully. You can now log in with your new password."})
+}
+
+// ChangePasswordRoute handles password change after successful login
+func ChangePasswordRoute(ctx *gin.Context) {
+	var unverified NewPassword
+	if err := ctx.ShouldBindJSON(&unverified); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
+		return
+	}
+
+	if len(unverified.Password) < 8 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidPasswordFormat})
+		return
+	}
+
+	verification, ok := verifications[unverified.Email]
+	if (!ok) || verification.Type != "PasswordReset" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidVerification})
+		return
+	}
+
+	if verification.Code != unverified.Code {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidCode})
+		return
+	}
+
+	if verification.ExpiresAt.Before(time.Now()) {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrCodeExpired})
+		return
+	}
+
+	err := changePassword(ctx, unverified.Email, unverified.Password)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
+		return
+	}
+
+	delete(verifications, unverified.Email)
+	ctx.JSON(http.StatusOK, gin.H{"message": RespPasswordChangeSuccess})
+}
+
+// resendResetPasswordRoute handles resending password reset emails
+func resendResetPasswordRoute(ctx *gin.Context) {
+	var request db.Partner
+	if err := ctx.ShouldBindJSON(&request); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
+		return
+	}
+
+	if !IsValidEmail(request.Email) {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEmail})
+		return
+	}
+
+	exists, err := queries.CheckUserEmail(ctx, request.Email)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEmailCheck})
+		return
+	}
+
+	if !exists {
+		ctx.JSON(http.StatusOK, gin.H{"message": RespResetEmailSent, "sent": true})
+		return
+	}
+
+	verification, exists := verifications[request.Email]
+	resend := true
+
+	if exists && verification.Type == "PasswordReset" {
+		if verification.ExpiresAt.Before(time.Now()) {
+			verification.ExpiresAt = time.Now().Add(time.Hour)
+			verification.Code = strconv.Itoa(int(util.RandomInt(100000, 999999)))
+		} else if !time.Now().After(verification.AgainAt) {
+			resend = false
+		}
+		verification.AgainAt = time.Now().Add(time.Minute * 2)
+		verifications[request.Email] = verification
+	} else {
+		verification = VerificationData{
+			Code:      strconv.Itoa(int(util.RandomInt(100000, 999999))),
+			ExpiresAt: time.Now().Add(time.Hour),
+			AgainAt:   time.Now().Add(time.Minute * 2),
+			Type:      "PasswordReset",
+		}
+		verifications[request.Email] = verification
+	}
+
+	if resend {
+		sendResetCodeEmail(request.Email)
+		ctx.JSON(http.StatusOK, gin.H{"message": RespEmailSent, "sent": true})
+	} else {
+		ctx.JSON(http.StatusOK, gin.H{"message": RespVerificationResendCooldown, "sent": false, "wait_until": verification.AgainAt})
+	}
+}
+
+// validify validates if a token is still valid
+func validify(ctx *gin.Context) {
+	payload, err := GetPayload(ctx)
+	if err != nil {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": err})
+		return
+	}
+
+	partner, err := queries.GetPartnerByEmail(ctx, payload.Email)
+	if err != nil || !partner.Active {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": ErrAccountNotActive})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"is_valid": true, "expires_at": payload.ExpiryAt})
+}
+
+// RefreshTokenRoute refreshes an existing valid token
+func RefreshTokenRoute(ctx *gin.Context, tokenMaker *PasetoMaker) {
+	payload, err := GetPayload(ctx)
+	if err != nil {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": err})
+		return
+	}
+
+	partner, err := queries.GetPartnerByEmail(ctx, payload.Email)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrUserRetrievalFailed})
+		return
+	}
+
+	if !partner.Active {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": ErrAccountNotActive})
+		return
+	}
+
+	accessToken, err := tokenMaker.CreateToken(&partner)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, accessKey{
+		AccessToken: accessToken,
+		Email:       partner.Email,
+		ExpiresAt:   time.Now().Add(time.Hour * 24),
+	})
+}
+
+// SetupAuthRoutes initializes all auth-related routes
+func SetupAuthRoutes(router *gin.Engine, tokenMaker *PasetoMaker) {
+	// Public routes
+	router.POST("/api/register", register)
+	router.POST("/api/register/activate", func(ctx *gin.Context) {
+		ActivateAccountRoute(ctx, tokenMaker)
+	})
+	router.POST("/api/register/resend", resendActivationRoute)
+	router.POST("/api/reset", sendResetPasswordRoute)
+	router.POST("/api/reset/activate", passwordResetRoute)
+	router.POST("/api/reset/resend", resendResetPasswordRoute)
+	router.POST("/api/login", func(ctx *gin.Context) {
+		login(ctx, tokenMaker)
+	})
+
+	// Protected routes
+	auth := router.Group("/api").Use(authMiddleware(*tokenMaker))
+	auth.POST("/reset/new", ChangePasswordRoute)
+	auth.GET("/validify", validify)
+	auth.POST("/refresh-token", func(ctx *gin.Context) {
+		RefreshTokenRoute(ctx, tokenMaker)
+	})
+
+	// WebSocket routes with their own authentication
+	ws := router.Group("/ws").Use(wsAuthMiddleware(*tokenMaker))
+	ws.GET("/connect", handleWebSocketConnection)
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+
+├── errors.go
+
+////////////////////////////////////////////////////////////////////////////////////////
+// handlers/errors.go
+package handlers
+
+// Stick to constants of string errors
+// don't add functions to this file
+// don't add error handling to this file
+// don't add error checking to this file
+// don't add error logging to this file
+// don't add error recovery to this file
+// this is intended to simplify gin{"error": ErrMsg}
+
+// You are only allowed to add constants to this file
+const (
+	// Authentication errors
+	ErrNoHeader           = "no authorization header was provided"
+	ErrInvalidBearer      = "invalid or missing Bearer token"
+	ErrUnsupportedAuth    = "authorization type not supported"
+	ErrInvalidToken       = "access token not valid"
+	ErrTokenExpired       = "token has expired"
+	ErrPayloadNotFound    = "payload not found"
+	ErrInvalidPayload     = "invalid payload"
+	ErrAccountExists      = "account already exists"
+	ErrAccountNotActive   = "account not activated"
+	ErrInvalidCredentials = "invalid credentials"
+	ErrIncorrectPassword  = "incorrect password"
+	ErrRateLimitExceeded  = "rate limit exceeded, please try again later"
+
+	// Verification errors
+	ErrInvalidVerification   = "invalid verification"
+	ErrInvalidCode           = "invalid verification code"
+	ErrCodeExpired           = "verification code has expired"
+	ErrUserRetrievalFailed   = "user retrieval failed"
+	ErrActivationFailed      = "error while activating account"
+	ErrCooldownPeriod        = "please wait before requesting another verification email"
+	ErrNoVerificationFound   = "no verification found for this email"
+	ErrWrongVerificationType = "wrong verification type"
+
+	// Database errors
+	ErrInvalidEmail           = "invalid email format"
+	ErrInvalidEmailCheck      = "error checking email existence"
+	ErrInvalidEmailInsert     = "error creating user account"
+	ErrDBHashingPassword      = "error while hashing password"
+	ErrDBPasswordChange       = "error while changing password"
+	ErrInvalidSelectParams    = "invalid selection parameters"
+	ErrInvalidParamsAssertion = "invalid parameters assertion"
+
+	// Server errors
+	ErrInternalServerError   = "internal server error"
+	ErrInvalidJSON           = "invalid JSON payload"
+	ErrNoPayload             = "no payload provided"
+	ErrInvalidPasswordFormat = "password must be at least 8 characters long"
+)
+
+////////////////////////////////////////////////////////////////////////////////////////
+
 ├── go.mod
 
 ////////////////////////////////////////////////////////////////////////////////////////
-module github.com/1AbdulkarimMousa/SchemaSculptor/agent
+module github.com/1AbdulkarimMousa/SchemaSculptor/handler
+
+replace github.com/1AbdulkarimMousa/SchemaSculptor/db => ./../db
+
+replace github.com/1AbdulkarimMousa/SchemaSculptor/handlers => ./../handlers
 
 replace github.com/1AbdulkarimMousa/SchemaSculptor/util => ./../util
 
 go 1.22.2
 
 require (
+	github.com/aead/chacha20poly1305 v0.0.0-20201124145622-1a5aba2a8b29
+	github.com/1AbdulkarimMousa/SchemaSculptor/db v0.0.0-00010101000000-000000000000
 	github.com/1AbdulkarimMousa/SchemaSculptor/util v0.0.0-00010101000000-000000000000
+	github.com/gin-gonic/gin v1.10.0
+	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.10.9
+	github.com/o1egl/paseto v1.0.0
+	github.com/valyala/fasttemplate v1.2.2
+	gopkg.in/mail.v2 v2.3.1
 )
 
 require (
+	github.com/aead/chacha20 v0.0.0-20180709150244-8b13a72661da // indirect
+	github.com/aead/poly1305 v0.0.0-20180717145839-3fee0db0b635 // indirect
+	github.com/bytedance/sonic v1.11.6 // indirect
+	github.com/bytedance/sonic/loader v0.1.1 // indirect
+	github.com/cloudwego/base64x v0.1.4 // indirect
+	github.com/cloudwego/iasm v0.2.0 // indirect
+	github.com/gabriel-vasile/mimetype v1.4.3 // indirect
+	github.com/gin-contrib/sse v0.1.0 // indirect
+	github.com/go-playground/locales v0.14.1 // indirect
+	github.com/go-playground/universal-translator v0.18.1 // indirect
+	github.com/go-playground/validator/v10 v10.20.0 // indirect
+	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/joho/godotenv v1.5.1 // indirect
-	golang.org/x/crypto v0.11.0 // indirect
+	github.com/json-iterator/go v1.1.12 // indirect
+	github.com/klauspost/cpuid/v2 v2.2.7 // indirect
+	github.com/leodido/go-urn v1.4.0 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
+	github.com/modern-go/reflect2 v1.0.2 // indirect
+	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
+	github.com/pkg/errors v0.8.0 // indirect
+	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
+	github.com/ugorji/go/codec v1.2.12 // indirect
+	github.com/valyala/bytebufferpool v1.0.0 // indirect
+	golang.org/x/arch v0.8.0 // indirect
+	golang.org/x/crypto v0.23.0 // indirect
+	golang.org/x/net v0.25.0 // indirect
+	golang.org/x/sys v0.20.0 // indirect
+	golang.org/x/text v0.15.0 // indirect
+	google.golang.org/protobuf v1.34.1 // indirect
+	gopkg.in/alexcesaro/quotedprintable.v3 v3.0.0-20150716171945-2caba252f4dc // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
 ////////////////////////////////////////////////////////////////////////////////////////
@@ -22,285 +874,580 @@ require (
 ├── go.sum
 
 ////////////////////////////////////////////////////////////////////////////////////////
+github.com/aead/chacha20 v0.0.0-20180709150244-8b13a72661da h1:KjTM2ks9d14ZYCvmHS9iAKVt9AyzRSqNU1qabPih5BY=
+github.com/aead/chacha20 v0.0.0-20180709150244-8b13a72661da/go.mod h1:eHEWzANqSiWQsof+nXEI9bUVUyV6F53Fp89EuCh2EAA=
+github.com/aead/chacha20poly1305 v0.0.0-20170617001512-233f39982aeb/go.mod h1:UzH9IX1MMqOcwhoNOIjmTQeAxrFgzs50j4golQtXXxU=
+github.com/aead/chacha20poly1305 v0.0.0-20201124145622-1a5aba2a8b29 h1:1DcvRPZOdbQRg5nAHt2jrc5QbV0AGuhDdfQI6gXjiFE=
+github.com/aead/chacha20poly1305 v0.0.0-20201124145622-1a5aba2a8b29/go.mod h1:UzH9IX1MMqOcwhoNOIjmTQeAxrFgzs50j4golQtXXxU=
+github.com/aead/poly1305 v0.0.0-20180717145839-3fee0db0b635 h1:52m0LGchQBBVqJRyYYufQuIbVqRawmubW3OFGqK1ekw=
+github.com/aead/poly1305 v0.0.0-20180717145839-3fee0db0b635/go.mod h1:lmLxL+FV291OopO93Bwf9fQLQeLyt33VJRUg5VJ30us=
+github.com/bytedance/sonic v1.11.6 h1:oUp34TzMlL+OY1OUWxHqsdkgC/Zfc85zGqw9siXjrc0=
+github.com/bytedance/sonic v1.11.6/go.mod h1:LysEHSvpvDySVdC2f87zGWf6CIKJcAvqab1ZaiQtds4=
+github.com/bytedance/sonic/loader v0.1.1 h1:c+e5Pt1k/cy5wMveRDyk2X4B9hF4g7an8N3zCYjJFNM=
+github.com/bytedance/sonic/loader v0.1.1/go.mod h1:ncP89zfokxS5LZrJxl5z0UJcsk4M4yY2JpfqGeCtNLU=
+github.com/cloudwego/base64x v0.1.4 h1:jwCgWpFanWmN8xoIUHa2rtzmkd5J2plF/dnLS6Xd/0Y=
+github.com/cloudwego/base64x v0.1.4/go.mod h1:0zlkT4Wn5C6NdauXdJRhSKRlJvmclQ1hhJgA0rcu/8w=
+github.com/cloudwego/iasm v0.2.0 h1:1KNIy1I1H9hNNFEEH3DVnI4UujN+1zjpuk6gwHLTssg=
+github.com/cloudwego/iasm v0.2.0/go.mod h1:8rXZaNYT2n95jn+zTI1sDr+IgcD2GVs0nlbbQPiEFhY=
+github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
+github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/gabriel-vasile/mimetype v1.4.3 h1:in2uUcidCuFcDKtdcBxlR0rJ1+fsokWf+uqxgUFjbI0=
+github.com/gabriel-vasile/mimetype v1.4.3/go.mod h1:d8uq/6HKRL6CGdk+aubisF/M5GcPfT7nKyLpA0lbSSk=
+github.com/gin-contrib/sse v0.1.0 h1:Y/yl/+YNO8GZSjAhjMsSuLt29uWRFHdHYUb5lYOV9qE=
+github.com/gin-contrib/sse v0.1.0/go.mod h1:RHrZQHXnP2xjPF+u1gW/2HnVO7nvIa9PG3Gm+fLHvGI=
+github.com/gin-gonic/gin v1.10.0 h1:nTuyha1TYqgedzytsKYqna+DfLos46nTv2ygFy86HFU=
+github.com/gin-gonic/gin v1.10.0/go.mod h1:4PMNQiOhvDRa013RKVbsiNwoyezlm2rm0uX/T7kzp5Y=
+github.com/go-playground/assert/v2 v2.2.0 h1:JvknZsQTYeFEAhQwI4qEt9cyV5ONwRHC+lYKSsYSR8s=
+github.com/go-playground/assert/v2 v2.2.0/go.mod h1:VDjEfimB/XKnb+ZQfWdccd7VUvScMdVu0Titje2rxJ4=
+github.com/go-playground/locales v0.14.1 h1:EWaQ/wswjilfKLTECiXz7Rh+3BjFhfDFKv/oXslEjJA=
+github.com/go-playground/locales v0.14.1/go.mod h1:hxrqLVvrK65+Rwrd5Fc6F2O76J/NuW9t0sjnWqG1slY=
+github.com/go-playground/universal-translator v0.18.1 h1:Bcnm0ZwsGyWbCzImXv+pAJnYK9S473LQFuzCbDbfSFY=
+github.com/go-playground/universal-translator v0.18.1/go.mod h1:xekY+UJKNuX9WP91TpwSH2VMlDf28Uj24BCp08ZFTUY=
+github.com/go-playground/validator/v10 v10.20.0 h1:K9ISHbSaI0lyB2eWMPJo+kOS/FBExVwjEviJTixqxL8=
+github.com/go-playground/validator/v10 v10.20.0/go.mod h1:dbuPbCMFw/DrkbEynArYaCwl3amGuJotoKCe95atGMM=
+github.com/goccy/go-json v0.10.2 h1:CrxCmQqYDkv1z7lO7Wbh2HN93uovUHgrECaO5ZrCXAU=
+github.com/goccy/go-json v0.10.2/go.mod h1:6MelG93GURQebXPDq3khkgXZkazVtN9CRI+MGFi0w8I=
+github.com/google/go-cmp v0.5.5 h1:Khx7svrCpmxxtHBq5j2mp/xVjsi8hQMfNLvJFAlrGgU=
+github.com/google/go-cmp v0.5.5/go.mod h1:v8dTdLbMG2kIc/vJvl+f65V22dbkXbowE6jgT/gNBxE=
+github.com/google/gofuzz v1.0.0/go.mod h1:dBl0BpW6vV/+mYPU4Po3pmUjxk6FQPldtuIdl/M65Eg=
+github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
+github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 github.com/joho/godotenv v1.5.1 h1:7eLL/+HRGLY0ldzfGMeQkb7vMd0as4CfYvUVzLqw0N0=
 github.com/joho/godotenv v1.5.1/go.mod h1:f4LDr5Voq0i2e/R5DDNOoa2zzDfwtkZa6DnEwAbqwq4=
+github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnrnM=
+github.com/json-iterator/go v1.1.12/go.mod h1:e30LSqwooZae/UwlEbR2852Gd8hjQvJoHmT4TnhNGBo=
+github.com/klauspost/cpuid/v2 v2.0.9/go.mod h1:FInQzS24/EEf25PyTYn52gqo7WaD8xa0213Md/qVLRg=
+github.com/klauspost/cpuid/v2 v2.2.7 h1:ZWSB3igEs+d0qvnxR/ZBzXVmxkgt8DdzP6m9pfuVLDM=
+github.com/klauspost/cpuid/v2 v2.2.7/go.mod h1:Lcz8mBdAVJIBVzewtcLocK12l3Y+JytZYpaMropDUws=
+github.com/knz/go-libedit v1.10.1/go.mod h1:MZTVkCWyz0oBc7JOWP3wNAzd002ZbM/5hgShxwh4x8M=
+github.com/leodido/go-urn v1.4.0 h1:WT9HwE9SGECu3lg4d/dIA+jxlljEa1/ffXKmRjqdmIQ=
+github.com/leodido/go-urn v1.4.0/go.mod h1:bvxc+MVxLKB4z00jd1z+Dvzr47oO32F/QSNjSBOlFxI=
 github.com/lib/pq v1.10.9 h1:YXG7RB+JIjhP29X+OtkiDnYaXQwpS4JEWq7dtCCRUEw=
 github.com/lib/pq v1.10.9/go.mod h1:AlVN5x4E4T544tWzH6hKfbfQvm3HdbOxrmggDNAPY9o=
-golang.org/x/crypto v0.11.0 h1:6Ewdq3tDic1mg5xRO4milcWCfMVQhI4NkqWWvqejpuA=
-golang.org/x/crypto v0.11.0/go.mod h1:xgJhtzW8F9jGdVFWZESrid1U1bjeNy4zgy5cRr/CIio=
+github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=
+github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
+github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421/go.mod h1:6dJC0mAP4ikYIbvyc7fijjWJddQyLn8Ig3JB5CqoB9Q=
+github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd h1:TRLaZ9cD/w8PVh93nsPXa1VrQ6jlwL5oN8l14QlcNfg=
+github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd/go.mod h1:6dJC0mAP4ikYIbvyc7fijjWJddQyLn8Ig3JB5CqoB9Q=
+github.com/modern-go/reflect2 v1.0.2 h1:xBagoLtFs94CBntxluKeaWgTMpvLxC4ur3nMaC9Gz0M=
+github.com/modern-go/reflect2 v1.0.2/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjYzDa0/r8luk=
+github.com/o1egl/paseto v1.0.0 h1:bwpvPu2au176w4IBlhbyUv/S5VPptERIA99Oap5qUd0=
+github.com/o1egl/paseto v1.0.0/go.mod h1:5HxsZPmw/3RI2pAwGo1HhOOwSdvBpcuVzO7uDkm+CLU=
+github.com/pelletier/go-toml/v2 v2.2.2 h1:aYUidT7k73Pcl9nb2gScu7NSrKCSHIDE89b3+6Wq+LM=
+github.com/pelletier/go-toml/v2 v2.2.2/go.mod h1:1t835xjRzz80PqgE6HHgN2JOsmgYu/h4qDAS4n929Rs=
+github.com/pkg/errors v0.8.0 h1:WdK/asTD0HN+q6hsWO3/vpuAkAr+tw6aNJNDFFf0+qw=
+github.com/pkg/errors v0.8.0/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
+github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
+github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
+github.com/stretchr/objx v0.4.0/go.mod h1:YvHI0jy2hoMjB+UWwv71VJQ9isScKT/TqJzVSSt89Yw=
+github.com/stretchr/objx v0.5.0/go.mod h1:Yh+to48EsGEfYuaHDzXPcE3xhTkx73EhmCGUpEOglKo=
+github.com/stretchr/objx v0.5.2/go.mod h1:FRsXN1f5AsAjCGJKqEizvkpNtU+EGNCLh3NxZ/8L+MA=
+github.com/stretchr/testify v1.2.2/go.mod h1:a8OnRcib4nhh0OaRAV+Yts87kKdq0PP7pXfy6kDkUVs=
+github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=
+github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
+github.com/stretchr/testify v1.7.1/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
+github.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO+kdMU+MU=
+github.com/stretchr/testify v1.8.1/go.mod h1:w2LPCIKwWwSfY2zedu0+kehJoqGctiVI29o6fzry7u4=
+github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXlSw2iwfAo=
+github.com/stretchr/testify v1.9.0 h1:HtqpIVDClZ4nwg75+f6Lvsy/wHu+3BoSGCbBAcpTsTg=
+github.com/stretchr/testify v1.9.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
+github.com/twitchyliquid64/golang-asm v0.15.1 h1:SU5vSMR7hnwNxj24w34ZyCi/FmDZTkS4MhqMhdFk5YI=
+github.com/twitchyliquid64/golang-asm v0.15.1/go.mod h1:a1lVb/DtPvCB8fslRZhAngC2+aY1QWCk3Cedj/Gdt08=
+github.com/ugorji/go/codec v1.2.12 h1:9LC83zGrHhuUA9l16C9AHXAqEV/2wBQ4nkvumAE65EE=
+github.com/ugorji/go/codec v1.2.12/go.mod h1:UNopzCgEMSXjBc6AOMqYvWC1ktqTAfzJZUZgYf6w6lg=
+github.com/valyala/bytebufferpool v1.0.0 h1:GqA5TC/0021Y/b9FG4Oi9Mr3q7XYx6KllzawFIhcdPw=
+github.com/valyala/bytebufferpool v1.0.0/go.mod h1:6bBcMArwyJ5K/AmCkWv1jt77kVWyCJ6HpOuEn7z0Csc=
+github.com/valyala/fasttemplate v1.2.2 h1:lxLXG0uE3Qnshl9QyaK6XJxMXlQZELvChBOCmQD0Loo=
+github.com/valyala/fasttemplate v1.2.2/go.mod h1:KHLXt3tVN2HBp8eijSv/kGJopbvo7S+qRAEEKiv+SiQ=
+golang.org/x/arch v0.0.0-20210923205945-b76863e36670/go.mod h1:5om86z9Hs0C8fWVUuoMHwpExlXzs5Tkyp9hOrfG7pp8=
+golang.org/x/arch v0.8.0 h1:3wRIsP3pM4yUptoR96otTUOXI367OS0+c9eeRi9doIc=
+golang.org/x/arch v0.8.0/go.mod h1:FEVrYAQjsQXMVJ1nsMoVVXPZg6p2JE2mx8psSWTDQys=
+golang.org/x/crypto v0.0.0-20181025213731-e84da0312774/go.mod h1:6SG95UA2DQfeDnfUPMdvaQW0Q7yPrPDi9nlGo2tz2b4=
+golang.org/x/crypto v0.23.0 h1:dIJU/v2J8Mdglj/8rJ6UUOM3Zc9zLZxVZwwxMooUSAI=
+golang.org/x/crypto v0.23.0/go.mod h1:CKFgDieR+mRhux2Lsu27y0fO304Db0wZe70UKqHu0v8=
+golang.org/x/net v0.25.0 h1:d/OCCoBEUq33pjydKrGQhw7IlUPI2Oylr+8qLx49kac=
+golang.org/x/net v0.25.0/go.mod h1:JkAGAh7GEvH74S6FOH42FLoXpXbE/aqXSrIQjXgsiwM=
+golang.org/x/sys v0.0.0-20181026203630-95b1ffbd15a5/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+golang.org/x/sys v0.5.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+golang.org/x/sys v0.6.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+golang.org/x/sys v0.20.0 h1:Od9JTbYCk261bKm4M/mw7AklTlFYIa0bIp9BgSm1S8Y=
+golang.org/x/sys v0.20.0/go.mod h1:/VUhepiaJMQUp4+oa/7Zr1D23ma6VTLIYjOOTFZPUcA=
+golang.org/x/text v0.15.0 h1:h1V/4gjBv8v9cjcR6+AR5+/cIYK5N/WAgiv4xlsEtAk=
+golang.org/x/text v0.15.0/go.mod h1:18ZOQIKpY8NJVqYksKHtTdi31H5itFRjB5/qKTNYzSU=
+golang.org/x/xerrors v0.0.0-20191204190536-9bdfabe68543 h1:E7g+9GITq07hpfrRu66IVDexMakfv52eLZ2CXBWiKr4=
+golang.org/x/xerrors v0.0.0-20191204190536-9bdfabe68543/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
+google.golang.org/protobuf v1.34.1 h1:9ddQBjfCyZPOHPUiPxpYESBLc+T8P3E+Vo4IbKZgFWg=
+google.golang.org/protobuf v1.34.1/go.mod h1:c6P6GXX6sHbq/GpV6MGZEdwhWPcYBgnhAHhKbcUYpos=
+gopkg.in/alexcesaro/quotedprintable.v3 v3.0.0-20150716171945-2caba252f4dc h1:2gGKlE2+asNV9m7xrywl36YYNnBG5ZQ0r/BOOxqPpmk=
+gopkg.in/alexcesaro/quotedprintable.v3 v3.0.0-20150716171945-2caba252f4dc/go.mod h1:m7x9LTH6d71AHyAX77c9yqWCCa3UKHcVEj9y7hAtKDk=
+gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
+gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
+gopkg.in/mail.v2 v2.3.1 h1:WYFn/oANrAGP2C0dcV6/pbkPzv8yGzqTjPmTeO7qoXk=
+gopkg.in/mail.v2 v2.3.1/go.mod h1:htwXN1Qh09vZJ1NVKxQqHPBaCBbzKhp5GzuJEA4VJWw=
+gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
+gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+nullprogram.com/x/optparse v1.0.0/go.mod h1:KdyPE+Igbe0jQUrVfMqDMeJQIJZEuyV7pjYmp6pbG50=
+rsc.io/pdf v0.1.1/go.mod h1:n8OzWcQ6Sp37PL01nO98y4iUCRdTGarVfzxY20ICaU4=
 
 ////////////////////////////////////////////////////////////////////////////////////////
 
-├── loader.go
+├── init.go
 
 ////////////////////////////////////////////////////////////////////////////////////////
-package agent
+// handlers/init.go
+package handlers
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-)
-
-// LoadSchema loads the database schema
-func (sr *SchemaRegistry) LoadSchema(ctx context.Context) error {
-	const schemaQuery = `
-	-- Return database schema as JSON with table and column information including foreign keys
-	SELECT row_to_json(t)
-	FROM (
-	  -- For each table, get its columns and their properties
-	  SELECT 
-		c.table_name,
-		json_agg(
-		  json_build_object(
-			'column_name', c.column_name,
-			'data_type', c.data_type,
-			'is_nullable', c.is_nullable,
-			-- Get foreign key references for this column (if any)
-			'references', (
-			  -- Subquery to find all distinct foreign key references
-			  SELECT 
-				CASE 
-				  WHEN COUNT(*) > 0 THEN 
-					-- Use DISTINCT to remove duplicate references
-					json_agg(
-					  DISTINCT jsonb_build_object(
-						'table', ccu.table_name,
-						'column', ccu.column_name
-					  )
-					)
-				  ELSE NULL 
-				END
-			  FROM 
-				-- Join tables needed for foreign key information
-				information_schema.table_constraints tc
-				JOIN information_schema.key_column_usage kcu
-				  ON tc.constraint_name = kcu.constraint_name
-				  AND tc.table_schema = kcu.table_schema
-				JOIN information_schema.constraint_column_usage ccu
-				  ON ccu.constraint_name = tc.constraint_name
-			  WHERE 
-				-- Only include foreign keys
-				tc.constraint_type = 'FOREIGN KEY'
-				-- That reference this specific column
-				AND kcu.table_name = c.table_name
-				AND kcu.column_name = c.column_name
-				AND tc.table_schema = 'public'
-			)
-		  ) ORDER BY c.ordinal_position
-		) AS columns
-	  FROM 
-		information_schema.columns c
-	  WHERE 
-		c.table_schema = 'public'
-	  GROUP BY 
-		c.table_name
-	) t;
-	`
-
-	// Execute the query
-	rows, err := sr.db.QueryContext(ctx, schemaQuery)
-	if err != nil {
-		return fmt.Errorf("failed to execute schema query: %w", err)
-	}
-	defer rows.Close()
-
-	// Process the results
-	var tables []Table
-	for rows.Next() {
-		var jsonData string
-		if err := rows.Scan(&jsonData); err != nil {
-			return fmt.Errorf("failed to scan row: %w", err)
-		}
-
-		var table Table
-		if err := json.Unmarshal([]byte(jsonData), &table); err != nil {
-			return fmt.Errorf("failed to unmarshal table data: %w", err)
-		}
-
-		tables = append(tables, table)
-	}
-
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("error iterating rows: %w", err)
-	}
-
-	sr.Tables = tables
-	return nil
-}
-
-////////////////////////////////////////////////////////////////////////////////////////
-
-├── models.go
-
-////////////////////////////////////////////////////////////////////////////////////////
-package agent
-
-// Reference represents a foreign key reference
-type Reference struct {
-	Table  string `json:"table"`
-	Column string `json:"column"`
-}
-
-// Column represents a database column with its properties
-type Column struct {
-	Name       string      `json:"column_name"`
-	DataType   string      `json:"data_type"`
-	IsNullable string      `json:"is_nullable"`
-	References []Reference `json:"references"`
-}
-
-// Table represents a database table with its columns
-type Table struct {
-	Name    string   `json:"table_name"`
-	Columns []Column `json:"columns"`
-}
-
-////////////////////////////////////////////////////////////////////////////////////////
-
-├── print.go
-
-////////////////////////////////////////////////////////////////////////////////////////
-package agent
-
-import (
-	"fmt"
-)
-
-// PrintSchema prints the schema information for debugging
-func (sr *SchemaRegistry) PrintSchema() {
-	for _, table := range sr.Tables {
-		fmt.Printf("Table: %s\n", table.Name)
-		for _, column := range table.Columns {
-			fmt.Printf("  Column: %s (%s, Nullable: %s)\n",
-				column.Name, column.DataType, column.IsNullable)
-
-			if len(column.References) > 0 {
-				fmt.Printf("    References:\n")
-				for _, ref := range column.References {
-					fmt.Printf("      %s.%s\n", ref.Table, ref.Column)
-				}
-			}
-		}
-		fmt.Println()
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////////////
-
-├── query.go
-
-////////////////////////////////////////////////////////////////////////////////////////
-package agent
-
-// GetTable returns a table by name
-func (sr *SchemaRegistry) GetTable(name string) (*Table, bool) {
-	for i := range sr.Tables {
-		if sr.Tables[i].Name == name {
-			return &sr.Tables[i], true
-		}
-	}
-	return nil, false
-}
-
-// GetColumn returns a column by table and column name
-func (sr *SchemaRegistry) GetColumn(tableName, columnName string) (*Column, bool) {
-	table, found := sr.GetTable(tableName)
-	if !found {
-		return nil, false
-	}
-
-	for i := range table.Columns {
-		if table.Columns[i].Name == columnName {
-			return &table.Columns[i], true
-		}
-	}
-	return nil, false
-}
-
-// GetReferencingColumns returns all columns that reference a given table and column
-func (sr *SchemaRegistry) GetReferencingColumns(tableName, columnName string) []struct {
-	Table  *Table
-	Column *Column
-} {
-	var result []struct {
-		Table  *Table
-		Column *Column
-	}
-
-	for i := range sr.Tables {
-		table := &sr.Tables[i]
-		for j := range table.Columns {
-			column := &table.Columns[j]
-			for _, ref := range column.References {
-				if ref.Table == tableName && ref.Column == columnName {
-					result = append(result, struct {
-						Table  *Table
-						Column *Column
-					}{
-						Table:  table,
-						Column: column,
-					})
-				}
-			}
-		}
-	}
-
-	return result
-}
-
-////////////////////////////////////////////////////////////////////////////////////////
-
-├── registery.go
-
-////////////////////////////////////////////////////////////////////////////////////////
-package agent
-
-import (
 	"database/sql"
 	"fmt"
+	"log"
+	"strconv"
 
+	"github.com/1AbdulkarimMousa/SchemaSculptor/db"
 	"github.com/1AbdulkarimMousa/SchemaSculptor/util"
+	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
+	gomail "gopkg.in/mail.v2"
 )
 
-// SchemaRegistry holds the database schema information
-type SchemaRegistry struct {
-	Tables []Table
-	db     *sql.DB
-}
+// Global variables for shared components
+var (
+	router        *gin.Engine
+	queries       *db.Queries
+	tokenMaker    *PasetoMaker
+	verifications = make(map[string]VerificationData)
+	smtpDialer    *gomail.Dialer
+)
 
-// NewSchemaRegistry creates a new schema registry and connects to the database
-func NewSchemaRegistry() (*SchemaRegistry, error) {
-	// Connect to the database using environment variables
-	connStr := fmt.Sprintf(
-		"host=%s port=%s dbname=%s user=%s password=%s sslmode=%s",
-		util.DBHost, util.DBPort, util.DBName, util.DBUser, util.DBPass, util.DBSSl,
+// Consolidated initialization function
+func init() {
+	// 1. Load environment variables first
+	if err := util.LoadEnv("./.env"); err != nil {
+		log.Println("Warning: Error loading environment variables:", err)
+	}
+	log.Println("Environment variables loaded (or skipped)")
+
+	// 2. Initialize database connection
+	connectionString := fmt.Sprintf(
+		"postgresql://%s:%s@%s:%s/%s?sslmode=%s",
+		util.DBUser, util.DBPass, util.DBHost, util.DBPort, util.DBName, util.DBSSl,
 	)
-
-	db, err := sql.Open("postgres", connStr)
+	dbConn, err := sql.Open("postgres", connectionString)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
+		log.Fatalf("failed to connect to database: %v", err)
 	}
-
-	// Test the connection
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to ping database: %w", err)
+	if err := dbConn.Ping(); err != nil {
+		log.Fatalf("failed to ping database: %v", err)
 	}
+	// Initialize the SQLC queries struct with the database connection
+	// And prepare the prepared statements
+	ctx := context.Background()
+	preparedQueries, err := db.Prepare(ctx, dbConn)
+	if err != nil {
+		log.Fatalf("failed to prepare queries: %v", err)
+	}
+	queries = preparedQueries
+	log.Println("Database connected and queries prepared successfully")
 
-	return &SchemaRegistry{
-		db: db,
-	}, nil
+	// 3. Initialize token maker
+	tokenMaker, err = NewPaseto(util.PasetoKey)
+	if err != nil {
+		log.Fatalf("failed to create token maker: %v", err)
+	}
+	log.Println("Token maker initialized")
+
+	// 4. Initialize email templates
+	InitEmailTemplates()
+
+	// 5. Initialize SMTP
+	smtpPort, _ := strconv.Atoi(util.SMTPPort)
+	smtpDialer = gomail.NewDialer(util.SMTPHost, smtpPort, util.SMTPUser, util.SMTPPass)
+	log.Println("SMTP dialer initialized")
+
+	// 6. Initialize router
+	router = gin.Default()
+	log.Println("Gin router initialized")
+
+	// 7. Setup Authentication Routes (using the function from auth.go)
+	SetupAuthRoutes(router, tokenMaker)
+	log.Println("Authentication routes initialized")
 }
 
-// Close closes the database connection
-func (sr *SchemaRegistry) Close() error {
-	if sr.db != nil {
-		return sr.db.Close()
-	}
-	return nil
+// Public function to start the server
+func StartServer() error {
+	address := util.HTTPIP + ":" + util.HTTPPort
+	log.Printf("Server starting on %s", address)
+	return router.Run(address)
 }
+
+////////////////////////////////////////////////////////////////////////////////////////
+
+├── mail.go
+
+////////////////////////////////////////////////////////////////////////////////////////
+// handlers/mail.go
+package handlers
+
+import (
+	"context"
+	"log"
+	"strconv"
+	"time"
+
+	"github.com/1AbdulkarimMousa/SchemaSculptor/db"
+	"github.com/1AbdulkarimMousa/SchemaSculptor/util"
+	"github.com/valyala/fasttemplate"
+	gomail "gopkg.in/mail.v2"
+)
+
+// VerificationData struct for tracking verification codes
+type VerificationData struct {
+	Code      string    `json:"code" validate:"required"`
+	ExpiresAt time.Time `json:"expires_at"`
+	AgainAt   time.Time `json:"again_at"`
+	Type      string    `json:"type"` // Activation or PasswordReset
+}
+
+// User represents a partner with associated methods
+type User struct{ db.Partner }
+
+// Initialize email templates
+var (
+	verifyAccountTemplate        *fasttemplate.Template
+	resetPasswordTemplate        *fasttemplate.Template
+	passwordResetConfirmTemplate *fasttemplate.Template
+)
+
+// InitEmailTemplates initializes the email templates
+func InitEmailTemplates() {
+	verifyAccountTemplate = fasttemplate.New(VerificationEmailTemplate, "{{", "}}")
+	resetPasswordTemplate = fasttemplate.New(PasswordResetTemplate, "{{", "}}")
+	passwordResetConfirmTemplate = fasttemplate.New(PasswordResetConfirmationTemplate, "{{", "}}")
+	log.Println("Email templates initialized")
+}
+
+// sendVerificationEmail sends a verification email to a newly registered user
+func sendVerificationEmail(user *db.Partner) {
+	// Create a new verification code that expires in 1 hour
+	verification := VerificationData{
+		Code:      strconv.Itoa(int(util.RandomInt(100000, 999999))),
+		ExpiresAt: time.Now().Add(time.Hour),       // 1-hour expiration for verification codes
+		AgainAt:   time.Now().Add(time.Minute * 2), // 2-minute cooldown between resend attempts
+		Type:      "Activation",
+	}
+	verifications[user.Email] = verification
+
+	message := verifyAccountTemplate.ExecuteString(map[string]interface{}{
+		"NAME":    user.Name,
+		"CODE":    verification.Code,
+		"EXPIRES": verification.ExpiresAt.Format("2006-01-02 15:04:05"),
+	})
+
+	m := gomail.NewMessage()
+	m.SetHeader("From", util.SMTPUser)
+	m.SetHeader("To", user.Email)
+	m.SetHeader("Subject", "Account Activation - SchemaSculptor")
+	m.SetBody("text/html", message)
+
+	if err := smtpDialer.DialAndSend(m); err != nil {
+		log.Printf("Failed to send verification email: %v", err)
+		// Don't panic, just log the error
+	} else {
+		log.Printf("Verification email sent to %s", user.Email)
+	}
+}
+
+// resendVerificationEmail resends a verification email to an inactive user
+func (verification *VerificationData) resendVerificationEmail(email string) {
+
+	// Get partner by email to have access to the name
+	partner, err := queries.GetPartnerByEmail(context.Background(), email)
+	if err != nil {
+		log.Printf("Failed to get partner by email: %v", err)
+		return
+	}
+
+	// Update the verification in the global map to ensure it's current
+	verifications[email] = *verification
+
+	message := verifyAccountTemplate.ExecuteString(map[string]interface{}{
+		"NAME":    partner.Name,
+		"CODE":    verification.Code,
+		"EXPIRES": verification.ExpiresAt.Format("2006-01-02 15:04:05"),
+	})
+
+	m := gomail.NewMessage()
+	m.SetHeader("From", util.SMTPUser)
+	m.SetHeader("To", email)
+	m.SetHeader("Subject", "Account Activation - SchemaSculptor")
+	m.SetBody("text/html", message)
+
+	if err := smtpDialer.DialAndSend(m); err != nil {
+		log.Printf("Failed to resend verification email: %v", err)
+	} else {
+		log.Printf("Verification email resent to %s", email)
+	}
+}
+
+// sendResetCodeEmail sends a password reset code to a user
+func sendResetCodeEmail(email string) {
+	verification, exists := verifications[email]
+
+	if !exists || verification.Type != "PasswordReset" {
+		// Create new verification if none exists or if it's not a password reset type
+		verification = VerificationData{
+			Code:      strconv.Itoa(int(util.RandomInt(100000, 999999))),
+			ExpiresAt: time.Now().Add(time.Hour),       // 1-hour expiration
+			AgainAt:   time.Now().Add(time.Minute * 2), // 2-minute cooldown
+			Type:      "PasswordReset",
+		}
+	}
+
+	// Update or add the verification to the global map
+	verifications[email] = verification
+
+	// Get partner by email to have access to the name
+	partner, err := queries.GetPartnerByEmail(nil, email)
+	if err != nil {
+		log.Printf("Failed to get partner by email: %v", err)
+		return
+	}
+
+	message := resetPasswordTemplate.ExecuteString(map[string]interface{}{
+		"NAME":    partner.Name,
+		"CODE":    verification.Code,
+		"EXPIRES": verification.ExpiresAt.Format("2006-01-02 15:04:05"),
+	})
+
+	m := gomail.NewMessage()
+	m.SetHeader("From", util.SMTPUser)
+	m.SetHeader("To", email)
+	m.SetHeader("Subject", "Password Reset - SchemaSculptor")
+	m.SetBody("text/html", message)
+
+	if err := smtpDialer.DialAndSend(m); err != nil {
+		log.Printf("Failed to send password reset email: %v", err)
+	} else {
+		log.Printf("Password reset email sent to %s", email)
+	}
+}
+
+// sendResetPasswordEmail sends a confirmation email after password reset
+func (user *User) sendResetPasswordEmail() {
+	message := passwordResetConfirmTemplate.ExecuteString(map[string]interface{}{
+		"NAME": user.Name,
+		"TIME": time.Now().Format("2006-01-02 15:04:05"),
+	})
+
+	m := gomail.NewMessage()
+	m.SetHeader("From", util.SMTPUser)
+	m.SetHeader("To", user.Email)
+	m.SetHeader("Subject", "Password Reset Successful - SchemaSculptor")
+	m.SetBody("text/html", message)
+
+	if err := smtpDialer.DialAndSend(m); err != nil {
+		log.Printf("Failed to send password reset confirmation email: %v", err)
+	} else {
+		log.Printf("Password reset confirmation email sent to %s", user.Email)
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+
+├── responses.go
+
+////////////////////////////////////////////////////////////////////////////////////////
+package handlers
+
+// Stick to constants of string responses
+// don't add functions to this file
+// don't add msg handling to this file
+// don't add msg checking to this file
+// don't add msg logging to this file
+// don't add msg recovery to this file
+// this is intended to simplify gin{"key": RespMsg}
+// handlers/responses.go
+
+// You are only allowed to add constants to this file
+const (
+	// Success messages
+	RespPasswordResetSuccess       = "Password has been reset successfully. You can now log in with your new password."
+	RespPasswordChangeSuccess      = "Password has been changed successfully."
+	RespEmailSent                  = "Email sent successfully."
+	RespActivationSuccess          = "Your account has been activated successfully."
+	RespRegistrationSuccess        = "Registration successful. Please check your email for verification code."
+	RespVerificationResent         = "Verification email resent successfully."
+	RespResetEmailSent             = "If a user with this email exists, a password reset email has been sent."
+	RespAccountAlreadyActive       = "Account is already active. You can log in."
+	RespVerificationRequired       = "Account not activated. Please check your email for verification code."
+	RespVerificationResendCooldown = "Please wait before requesting another verification email."
+)
+
+////////////////////////////////////////////////////////////////////////////////////////
+
+├── routes.go
+
+////////////////////////////////////////////////////////////////////////////////////////
+// handlers/routes.go
+package handlers
+
+import (
+	"log"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
+
+// handleWebSocketConnection handles WebSocket connections
+func handleWebSocketConnection(ctx *gin.Context) {
+	// Get payload (authenticated user)
+	payload, err := GetPayload(ctx)
+	if err != nil {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": ErrInvalidPayload})
+		return
+	}
+
+	// Verify partner still exists and is active
+	partner, err := queries.GetPartnerByEmail(ctx, payload.Email)
+	if err != nil || !partner.Active {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": ErrAccountNotActive})
+		return
+	}
+
+	// Implementation for WebSocket connection handling
+	// This would typically involve upgrading the connection to WebSocket
+	// and handling events
+
+	log.Printf("WebSocket connection established for user: %s (ID: %d)", payload.Email, payload.PartnerID)
+
+	// Here you would add the WebSocket upgrade logic
+	// Example:
+	// upgrader := websocket.Upgrader{
+	//     ReadBufferSize:  1024,
+	//     WriteBufferSize: 1024,
+	//     CheckOrigin: func(r *http.Request) bool {
+	//         return true
+	//     },
+	// }
+	// conn, err := upgrader.Upgrade(ctx.Writer, ctx.Request, nil)
+	// if err != nil {
+	//     log.Printf("Failed to upgrade connection: %v", err)
+	//     return
+	// }
+	// defer conn.Close()
+
+	// Handle the WebSocket connection...
+}
+
+// userInfoRoute returns information about the authenticated user
+func userInfoRoute(ctx *gin.Context) {
+	// Get payload (authenticated user)
+	payload, err := GetPayload(ctx)
+	if err != nil {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": ErrInvalidPayload})
+		return
+	}
+
+	// Get partner information
+	partner, err := queries.GetPartnerByEmail(ctx, payload.Email)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrUserRetrievalFailed})
+		return
+	}
+
+	// Return user info (excluding sensitive data)
+	ctx.JSON(http.StatusOK, gin.H{
+		"id":         partner.ID,
+		"name":       partner.Name,
+		"email":      partner.Email,
+		"balance":    partner.Balance,
+		"stripe_id":  partner.StripeID,
+		"created_at": time.Now(), // This should come from the database; using current time as a placeholder
+	})
+}
+
+// SetupAPIRoutes initializes API routes (excluding auth routes which are set up separately)
+func SetupAPIRoutes(router *gin.Engine, tokenMaker *PasetoMaker) {
+	// Add middleware for all API routes
+	api := router.Group("/api")
+
+	// Add authenticated API routes
+	authenticatedApi := api.Group("").Use(authMiddleware(*tokenMaker))
+	authenticatedApi.GET("/user", userInfoRoute)
+
+	// Other API routes can be added here
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+
+├── templates.go
+
+////////////////////////////////////////////////////////////////////////////////////////
+// handlers/templates.go
+package handlers
+
+// Email template constants
+const (
+	// VerificationEmailTemplate is used for account activation emails
+	VerificationEmailTemplate = `
+<!DOCTYPE html>
+<html>
+  <head>
+  </head>
+  <body>
+    <h1>Verify Your SchemaSculptor Account</h1>
+    <p>Hello {{.NAME}},</p>
+    <p>Thank you for signing up for our service. To complete your registration, please use the verification code below:</p>
+    <p>Verification Code: <b>{{.CODE}}</b></p>
+    <p>This code will expire at: {{.EXPIRES}}</p>
+    <p>If you did not request this email verification, please ignore this message.</p>
+    <p>Sincerely,</p>
+    <p>SchemaSculptor</p>
+  </body>
+</html>
+`
+
+	// PasswordResetTemplate is used for password reset emails
+	PasswordResetTemplate = `
+<!DOCTYPE html>
+<html>
+  <head>
+  </head>
+  <body>
+    <h1>Reset your SchemaSculptor Account Password</h1>
+    <p>Hello {{.NAME}},</p>
+    <p>Below is the password reset code:</p>
+    <p>Reset Code: <b>{{.CODE}}</b></p>
+    <p>This code will expire at: {{.EXPIRES}}</p>
+    <p>If you did not request this password reset, please ignore this message.</p>
+    <p>Sincerely,</p>
+    <p>SchemaSculptor</p>
+  </body>
+</html>
+`
+
+	// PasswordResetConfirmationTemplate is used to confirm successful password resets
+	PasswordResetConfirmationTemplate = `
+<!DOCTYPE html>
+<html>
+  <head>
+  </head>
+  <body>
+    <h1>Password Reset Successful</h1>
+    <p>Hello {{.NAME}},</p>
+    <p>Your password has been successfully reset on {{.TIME}}.</p>
+    <p>If you did not make this change, please contact support immediately.</p>
+    <p>Sincerely,</p>
+    <p>SchemaSculptor</p>
+  </body>
+</html>
+`
+)
 
 ////////////////////////////////////////////////////////////////////////////////////////
 

@@ -11,10 +11,22 @@ import (
 
 type Querier interface {
 	ActivatePartner(ctx context.Context, id int32) error
-	ChangePassword(ctx context.Context, arg *ChangePasswordParams) error
+	ChangePassword(ctx context.Context, arg ChangePasswordParams) error
 	CheckUserEmail(ctx context.Context, email string) (bool, error)
+	// Description: Insert a new partner record and return the created record
+	CreatePartner(ctx context.Context, arg CreatePartnerParams) (Partner, error)
+	// Description: Delete a partner record by primary key
+	DeletePartner(ctx context.Context, id int32) error
+	// Description: Retrieve a single partner record by primary key
+	GetPartner(ctx context.Context, id int32) (Partner, error)
+	// Description: Retrieve a single partner record by email
+	GetPartnerByEmail(ctx context.Context, email string) (Partner, error)
 	GetPartnerStripeCustumerID(ctx context.Context, id int32) (sql.NullString, error)
-	SetNewStripeAccount(ctx context.Context, arg *SetNewStripeAccountParams) error
+	// Description: Retrieve all partner records ordered by primary key
+	ListPartners(ctx context.Context) ([]Partner, error)
+	SetNewStripeAccount(ctx context.Context, arg SetNewStripeAccountParams) error
+	// Description: Update a partner record by primary key and return the updated record
+	UpdatePartner(ctx context.Context, arg UpdatePartnerParams) (Partner, error)
 }
 
 var _ Querier = (*Queries)(nil)

@@ -34,7 +34,7 @@ type ChangePasswordParams struct {
 	Password string `json:"password"`
 }
 
-func (q *Queries) ChangePassword(ctx context.Context, arg *ChangePasswordParams) error {
+func (q *Queries) ChangePassword(ctx context.Context, arg ChangePasswordParams) error {
 	_, err := q.exec(ctx, q.changePasswordStmt, changePassword, arg.ID, arg.Password)
 	return err
 }
@@ -52,6 +52,34 @@ func (q *Queries) CheckUserEmail(ctx context.Context, email string) (bool, error
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const getPartnerByEmail = `-- name: GetPartnerByEmail :one
+SELECT 
+	id, name, email, password, balance, active, stripe_id, wise_id, reason
+FROM 
+	partner
+WHERE 
+	email = $1
+LIMIT 1
+`
+
+// Description: Retrieve a single partner record by email
+func (q *Queries) GetPartnerByEmail(ctx context.Context, email string) (Partner, error) {
+	row := q.queryRow(ctx, q.getPartnerByEmailStmt, getPartnerByEmail, email)
+	var i Partner
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Email,
+		&i.Password,
+		&i.Balance,
+		&i.Active,
+		&i.StripeID,
+		&i.WiseID,
+		&i.Reason,
+	)
+	return i, err
 }
 
 const getPartnerStripeCustumerID = `-- name: GetPartnerStripeCustumerID :one
@@ -79,7 +107,7 @@ type SetNewStripeAccountParams struct {
 	StripeID sql.NullString `json:"stripe_id"`
 }
 
-func (q *Queries) SetNewStripeAccount(ctx context.Context, arg *SetNewStripeAccountParams) error {
+func (q *Queries) SetNewStripeAccount(ctx context.Context, arg SetNewStripeAccountParams) error {
 	_, err := q.exec(ctx, q.setNewStripeAccountStmt, setNewStripeAccount, arg.ID, arg.StripeID)
 	return err
 }

@@ -30,3 +30,12 @@ SELECT EXISTS (
     WHERE email = $1
 );
 
+-- name: GetPartnerByEmail :one
+-- Description: Retrieve a single partner record by email
+SELECT 
+	*
+FROM 
+	partner
+WHERE 
+	email = $1
+LIMIT 1;

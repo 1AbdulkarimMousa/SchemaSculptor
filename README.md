@@ -24,8 +24,13 @@ Finally, as LLM coding models gain traction in the industry, and as unexperience
 
 1. Clone the repository:
    ```bash
+<<<<<<< HEAD
    git clone https://github.com/your-username/valutoria.git
    cd appname
+=======
+   git clone https://github.com/1AbdulkarimMousa/SchemaSculptor
+   cd sculptor
+>>>>>>> bf8e919 (Finest Auth)
    ```
 
 2. Create an `.env` file:

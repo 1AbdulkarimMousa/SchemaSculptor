@@ -1,58 +1,52 @@
 // handlers/errors.go
 package handlers
 
-import (
-	"errors"
-)
+// Stick to constants of string errors
+// don't add functions to this file
+// don't add error handling to this file
+// don't add error checking to this file
+// don't add error logging to this file
+// don't add error recovery to this file
+// this is intended to simplify gin{"error": ErrMsg}
 
-// Standard error types as constants
-var (
+// You are only allowed to add constants to this file
+const (
 	// Authentication errors
-	ErrNoHeader           = errors.New("no authorization header was provided")
-	ErrInvalidBearer      = errors.New("invalid or missing Bearer token")
-	ErrUnsupportedAuth    = errors.New("authorization type not supported")
-	ErrInvalidToken       = errors.New("access token not valid")
-	ErrPayloadNotFound    = errors.New("payload not found")
-	ErrInvalidPayload     = errors.New("invalid payload")
-	ErrAccountExists      = errors.New("account already exists")
-	ErrAccountNotActive   = errors.New("account not activated")
-	ErrInvalidCredentials = errors.New("invalid credentials")
-	ErrIncorrectPassword  = errors.New("incorrect password")
+	ErrNoHeader           = "no authorization header was provided"
+	ErrInvalidBearer      = "invalid or missing Bearer token"
+	ErrUnsupportedAuth    = "authorization type not supported"
+	ErrInvalidToken       = "access token not valid"
+	ErrTokenExpired       = "token has expired"
+	ErrPayloadNotFound    = "payload not found"
+	ErrInvalidPayload     = "invalid payload"
+	ErrAccountExists      = "account already exists"
+	ErrAccountNotActive   = "account not activated"
+	ErrInvalidCredentials = "invalid credentials"
+	ErrIncorrectPassword  = "incorrect password"
+	ErrRateLimitExceeded  = "rate limit exceeded, please try again later"
 
 	// Verification errors
-	ErrInvalidVerification = errors.New("invalid verification")
-	ErrInvalidCode         = errors.New("invalid code")
-	ErrCodeExpired         = errors.New("code expired")
-	ErrUserRetrievalFailed = errors.New("user retrieval failed")
-	ErrActivationFailed    = errors.New("error while activation")
-	ErrCooldownPeriod      = errors.New("please wait before requesting another verification email")
+	ErrInvalidVerification   = "invalid verification"
+	ErrInvalidCode           = "invalid verification code"
+	ErrCodeExpired           = "verification code has expired"
+	ErrUserRetrievalFailed   = "user retrieval failed"
+	ErrActivationFailed      = "error while activating account"
+	ErrCooldownPeriod        = "please wait before requesting another verification email"
+	ErrNoVerificationFound   = "no verification found for this email"
+	ErrWrongVerificationType = "wrong verification type"
 
 	// Database errors
-	ErrInvalidEmail           = errors.New("invalid email")
-	ErrInvalidEmailCheck      = errors.New("invalid email check")
-	ErrInvalidEmailInsert     = errors.New("invalid email insert")
-	ErrDBHashingPassword      = errors.New("error while hashing password")
-	ErrDBPasswordChange       = errors.New("error while password change")
-	ErrInvalidSelectParams    = errors.New("invalid selection parameters")
-	ErrInvalidParamsAssertion = errors.New("invalid parameters assertion")
+	ErrInvalidEmail           = "invalid email format"
+	ErrInvalidEmailCheck      = "error checking email existence"
+	ErrInvalidEmailInsert     = "error creating user account"
+	ErrDBHashingPassword      = "error while hashing password"
+	ErrDBPasswordChange       = "error while changing password"
+	ErrInvalidSelectParams    = "invalid selection parameters"
+	ErrInvalidParamsAssertion = "invalid parameters assertion"
 
 	// Server errors
-	ErrInternalServerError = errors.New("internal server error")
-	ErrInvalidJSON         = errors.New("invalid JSON payload")
-	ErrNoPayload           = errors.New("no payload provided")
-
-	// Deployment errors
-	ErrSubdomainRequired    = errors.New("subdomain is required")
-	ErrInvalidSubdomain     = errors.New("invalid subdomain format")
-	ErrSubdomainTaken       = errors.New("subdomain is already taken")
-	ErrInvalidServerVersion = errors.New("invalid server version")
-	ErrInvalidServerPlan    = errors.New("invalid server plan")
-	ErrNoBillingOption      = errors.New("no billing option provided")
-	ErrInvalidSpecs         = errors.New("invalid server specifications")
-	ErrInvalidUserServer    = errors.New("invalid user server")
-	ErrDeploymentNotFound   = errors.New("deployment not found")
-	ErrServerActionFailed   = errors.New("server action failed")
-	ErrInvalidDestroyAction = errors.New("invalid destroy action")
-	ErrInvalidAction        = errors.New("invalid action")
-	ErrInvalidContext       = errors.New("invalid context")
+	ErrInternalServerError   = "internal server error"
+	ErrInvalidJSON           = "invalid JSON payload"
+	ErrNoPayload             = "no payload provided"
+	ErrInvalidPasswordFormat = "password must be at least 8 characters long"
 )

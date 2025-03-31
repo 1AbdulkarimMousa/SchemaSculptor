@@ -2,20 +2,25 @@ module github.com/1AbdulkarimMousa/SchemaSculptor
 
 replace github.com/1AbdulkarimMousa/SchemaSculptor/handlers => ./handlers
 
+replace github.com/1AbdulkarimMousa/SchemaSculptor/agent => ./agent
+
 replace github.com/1AbdulkarimMousa/SchemaSculptor/db => ./db
 
 replace github.com/1AbdulkarimMousa/SchemaSculptor/util => ./util
 
 go 1.22.2
 
-require github.com/1AbdulkarimMousa/SchemaSculptor/handlers v0.0.0-00010101000000-000000000000
+require (
+	github.com/1AbdulkarimMousa/SchemaSculptor/agent v0.0.0-00010101000000-000000000000
+	github.com/1AbdulkarimMousa/SchemaSculptor/handlers v0.0.0-00010101000000-000000000000
+)
 
 require (
+	github.com/1AbdulkarimMousa/SchemaSculptor/db v0.0.0-00010101000000-000000000000 // indirect
+	github.com/1AbdulkarimMousa/SchemaSculptor/util v0.0.0-00010101000000-000000000000 // indirect
 	github.com/aead/chacha20 v0.0.0-20180709150244-8b13a72661da // indirect
 	github.com/aead/chacha20poly1305 v0.0.0-20201124145622-1a5aba2a8b29 // indirect
 	github.com/aead/poly1305 v0.0.0-20180717145839-3fee0db0b635 // indirect
-	github.com/1AbdulkarimMousa/SchemaSculptor/db v0.0.0-00010101000000-000000000000 // indirect
-	github.com/1AbdulkarimMousa/SchemaSculptor/util v0.0.0-00010101000000-000000000000 // indirect
 	github.com/bytedance/sonic v1.11.6 // indirect
 	github.com/bytedance/sonic/loader v0.1.1 // indirect
 	github.com/cloudwego/base64x v0.1.4 // indirect

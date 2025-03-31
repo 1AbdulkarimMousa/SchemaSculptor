@@ -3,6 +3,7 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -23,9 +24,6 @@ const (
 	authorizationHeaderKey        = "Authorization"
 	authorizationHeaderBearerType = "bearer"
 )
-
-// Token related types and functions
-// ================================
 
 // Payload represents the token payload structure
 type Payload struct {
@@ -48,16 +46,15 @@ func NewPayload(email string, partnerID int32) (*Payload, error) {
 		PartnerID: partnerID,
 		Email:     email,
 		CreatedAt: time.Now(),
-		ExpiryAt:  time.Now().Add(time.Hour * 2),
+		ExpiryAt:  time.Now().Add(time.Hour * 24),
 	}
-
 	return payload, nil
 }
 
 // Valid checks if the token has expired
 func (payload *Payload) Valid() error {
 	if time.Now().After(payload.ExpiryAt) {
-		return errors.New("token has expired")
+		return errors.New(ErrTokenExpired)
 	}
 	return nil
 }
@@ -78,7 +75,6 @@ func NewPaseto(symmetricKey string) (*PasetoMaker, error) {
 		paseto:       paseto.NewV2(),
 		symmetricKey: []byte(symmetricKey),
 	}
-
 	return maker, nil
 }
 
@@ -88,19 +84,16 @@ func (maker *PasetoMaker) CreateToken(partner *db.Partner) (string, error) {
 	if err != nil {
 		return "", err
 	}
-
 	return maker.paseto.Encrypt(maker.symmetricKey, payload, nil)
 }
 
 // VerifyToken validates a token and returns its payload
 func (maker *PasetoMaker) VerifyToken(token string) (*Payload, error) {
 	payload := &Payload{}
-
 	err := maker.paseto.Decrypt(token, maker.symmetricKey, payload, nil)
 	if err != nil {
-		return nil, err
+		return nil, errors.New(ErrInvalidToken)
 	}
-
 	err = payload.Valid()
 	if err != nil {
 		return nil, err
@@ -108,34 +101,95 @@ func (maker *PasetoMaker) VerifyToken(token string) (*Payload, error) {
 	return payload, nil
 }
 
-// Authentication middleware
-// =======================
+// Helper types and functions
+type accessKey struct {
+	AccessToken string    `json:"token"`
+	Email       string    `json:"email"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+type VerificationActivation struct {
+	Email string           `json:"email" validate:"required"`
+	Data  VerificationData `json:"verification" validate:"required"`
+}
+
+type NewPassword struct {
+	Email    string `json:"email" validate:"required"`
+	Code     string `json:"code" validate:"required"`
+	Password string `json:"password" validate:"required,min=8"`
+}
+
+// IsValidEmail checks if an email has a valid format
+func IsValidEmail(email string) bool {
+	return util.IsValidEmail(email)
+}
+
+// createNewVerification creates a new verification entry
+func createNewVerification(email string) *VerificationData {
+	verification := &VerificationData{
+		Code:      strconv.Itoa(int(util.RandomInt(100000, 999999))),
+		ExpiresAt: time.Now().Add(time.Hour),
+		AgainAt:   time.Now().Add(time.Minute * 2),
+		Type:      "Activation",
+	}
+	verifications[email] = *verification
+	return verification
+}
 
 // authMiddleware verifies the authentication token in the request
 func authMiddleware(maker PasetoMaker) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		authHeader := ctx.GetHeader(authorizationHeaderKey)
 		if authHeader == "" {
-			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrNoHeader.Error()})
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrNoHeader})
 			return
 		}
 
 		fields := strings.Fields(authHeader)
 		if len(fields) != 2 {
-			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrInvalidBearer.Error()})
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrInvalidBearer})
+			ctx.Redirect(http.StatusFound, "/login")
 			return
 		}
 
-		authType := fields[0]
-		if strings.ToLower(authType) != authorizationHeaderBearerType {
-			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrUnsupportedAuth.Error()})
+		authType := strings.ToLower(fields[0])
+		if authType != authorizationHeaderBearerType {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrUnsupportedAuth})
 			return
 		}
 
 		token := fields[1]
 		payload, err := maker.VerifyToken(token)
 		if err != nil {
-			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrInvalidToken.Error()})
+			if err.Error() == ErrTokenExpired {
+				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrTokenExpired, "code": "token_expired"})
+			} else {
+				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrInvalidToken})
+			}
+			return
+		}
+
+		ctx.Set("payload", payload)
+		ctx.Next()
+	}
+}
+
+// wsAuthMiddleware handles websocket authentication via token
+func wsAuthMiddleware(maker PasetoMaker) gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		token := ctx.Query("token")
+		if token == "" {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrNoHeader})
+			return
+		}
+
+		payload, err := maker.VerifyToken(token)
+		if err != nil {
+			if err.Error() == ErrTokenExpired {
+				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrTokenExpired, "code": "token_expired"})
+			} else {
+				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrInvalidToken})
+			}
 			return
 		}
 
@@ -148,289 +202,546 @@ func authMiddleware(maker PasetoMaker) gin.HandlerFunc {
 func GetPayload(ctx *gin.Context) (*Payload, error) {
 	payload, ok := ctx.Get("payload")
 	if !ok {
-		return nil, ErrPayloadNotFound
+		return nil, errors.New(ErrPayloadNotFound)
 	}
 	typedPayload, ok := payload.(*Payload)
 	if !ok {
-		return nil, ErrInvalidPayload
+		return nil, errors.New(ErrInvalidPayload)
 	}
 	return typedPayload, nil
 }
 
-// Token validation endpoint
-func validify(ctx *gin.Context) {
-	tokenStatus := true
-	ctx.JSON(http.StatusOK, gin.H{"is_valid": tokenStatus})
+// changePassword updates a user's password in the database
+func changePassword(ctx context.Context, email string, newPassword string) error {
+	partner, err := queries.GetPartnerByEmail(ctx, email)
+	if err != nil {
+		return errors.New(ErrUserRetrievalFailed)
+	}
+
+	hashedPassword, err := util.Hash(newPassword)
+	if err != nil {
+		return errors.New(ErrDBHashingPassword)
+	}
+
+	changePasswordParams := db.ChangePasswordParams{
+		ID:       partner.ID,
+		Password: hashedPassword,
+	}
+
+	err = queries.ChangePassword(ctx, changePasswordParams)
+	if err != nil {
+		return errors.New(ErrDBPasswordChange)
+	}
+
+	return nil
 }
 
-// Verification related types and functions
-// =======================================
+// Route handlers
+// ==============
 
-// VerificationActivation structure for account activation
-type VerificationActivation struct {
-	Email string           `json:"email" validate:"required"`
-	Data  VerificationData `json:"verification" validate:"required"`
-}
-
-// NewPassword structure for password reset
-type NewPassword struct {
-	Email    string `json:"email" validate:"required"`
-	Code     string `json:"code" validate:"required"`
-	Password string `json:"password" validate:"required"`
-}
-
-// Authentication handlers
-// =====================
-
-// register handles the registration process for a new partner
+// register handles new user registration
 func register(ctx *gin.Context) {
-	// Bind request with corresponding partner struct
 	var newPartner db.Partner
 	if err := ctx.ShouldBindJSON(&newPartner); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
 		return
 	}
 
-	// Check if a partner with the same email is already registered
+	if !IsValidEmail(newPartner.Email) {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEmail})
+		return
+	}
+
+	if len(newPartner.Password) < 8 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidPasswordFormat})
+		return
+	}
+
 	exists, err := queries.CheckUserEmail(ctx, newPartner.Email)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEmailCheck.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEmailCheck})
 		return
 	}
 
-	// Handle existing partners
 	if exists {
-		db.Querier.
-			// For now, return error as account exists
-			ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrAccountExists.Error()})
+		partner, err := queries.GetPartnerByEmail(ctx, newPartner.Email)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrUserRetrievalFailed})
+			return
+		}
+
+		if !partner.Active {
+			verification, exists := verifications[newPartner.Email]
+			resend := true
+
+			if exists {
+				if verification.ExpiresAt.Before(time.Now()) {
+					verification.ExpiresAt = time.Now().Add(time.Hour)
+					verification.Code = strconv.Itoa(int(util.RandomInt(100000, 999999)))
+				} else if !time.Now().After(verification.AgainAt) {
+					resend = false
+				}
+				verification.AgainAt = time.Now().Add(time.Minute * 2)
+				verifications[newPartner.Email] = verification
+			} else {
+				verification = *createNewVerification(newPartner.Email)
+			}
+
+			if resend {
+				verification.resendVerificationEmail(newPartner.Email)
+				ctx.JSON(http.StatusOK, gin.H{"message": RespVerificationRequired, "sent": true})
+			} else {
+				ctx.JSON(http.StatusOK, gin.H{"message": RespVerificationResendCooldown, "sent": false, "wait_until": verification.AgainAt})
+			}
+			return
+		}
+
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrAccountExists})
 		return
 	}
 
-	// Insert new partner into the database
-	hashedPassword, _ := util.Hash(newPartner.Password)
+	hashedPassword, err := util.Hash(newPartner.Password)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": ErrDBHashingPassword})
+		return
+	}
 
-	// For CreatePartner SQLC requires a schema definition
-	// Since we can't modify db package, this part requires adapting to your setup
-
-	// Send verification email to the partner
-	// Create a temporary partner object
-	partner := &db.Partner{
-		ID:       0, // This will be replaced by DB
+	createPartnerParams := db.CreatePartnerParams{
 		Name:     newPartner.Name,
 		Email:    newPartner.Email,
 		Password: hashedPassword,
-		Balance:  0.0,
+		Balance:  0,
 		Active:   false,
 	}
 
-	sendVerificationEmail(partner)
-	ctx.Status(http.StatusOK)
-}
-
-// ActivateAccountRoute handles the account activation process for a partner
-func ActivateAccountRoute(ctx *gin.Context) {
-	// Request binding for new user details
-	var unverified VerificationActivation
-	if err := ctx.ShouldBindJSON(&unverified); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	partner, err := queries.CreatePartner(ctx, createPartnerParams)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEmailInsert})
 		return
 	}
-	verification, ok := verifications[unverified.Email]
 
-	// Validate the activation code
+	sendVerificationEmail(&partner)
+	ctx.JSON(http.StatusOK, gin.H{"message": RespRegistrationSuccess, "email": partner.Email})
+}
+
+// login authenticates a user and provides an access token
+func login(ctx *gin.Context, tokenMaker *PasetoMaker) {
+	var credentials db.Partner
+	if err := ctx.ShouldBindJSON(&credentials); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
+		return
+	}
+
+	partner, err := queries.GetPartnerByEmail(ctx, credentials.Email)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidCredentials})
+		return
+	}
+
+	if !partner.Active {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": ErrAccountNotActive})
+		return
+	}
+
+	if err := util.Check(credentials.Password, partner.Password); err != nil {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": ErrIncorrectPassword})
+		return
+	}
+
+	accessToken, err := tokenMaker.CreateToken(&partner)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, accessKey{
+		AccessToken: accessToken,
+		Email:       partner.Email,
+		ExpiresAt:   time.Now().Add(time.Hour * 24),
+	})
+}
+
+// ActivateAccountRoute activates a newly registered account
+func ActivateAccountRoute(ctx *gin.Context, tokenMaker *PasetoMaker) {
+	var unverified VerificationActivation
+	if err := ctx.ShouldBindJSON(&unverified); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
+		return
+	}
+
+	verification, ok := verifications[unverified.Email]
 	if (!ok) || verification.Type != "Activation" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidVerification.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidVerification})
 		return
 	}
 
 	if verification.Code != unverified.Data.Code {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidCode.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidCode})
 		return
 	}
 
 	if verification.ExpiresAt.Before(time.Now()) {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrCodeExpired.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrCodeExpired})
 		return
 	}
 
-	// After validation, select then activate partner
-	// Need to add GetPartnerByEmail to SQLC
-	// For now, return error
-	ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Implementation error: GetPartnerByEmail not available"})
-	return
+	partner, err := queries.GetPartnerByEmail(ctx, unverified.Email)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrUserRetrievalFailed})
+		return
+	}
+
+	err = queries.ActivatePartner(ctx, partner.ID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrActivationFailed})
+		return
+	}
+
+	err = queries.SetNewStripeAccount(ctx, db.SetNewStripeAccountParams{
+		ID:       partner.ID,
+		StripeID: sql.NullString{String: "", Valid: false},
+	})
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": ErrInternalServerError})
+		return
+	}
+
+	delete(verifications, unverified.Email)
+	accessToken, err := tokenMaker.CreateToken(&partner)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, accessKey{
+		AccessToken: accessToken,
+		Email:       partner.Email,
+		ExpiresAt:   time.Now().Add(time.Hour * 24),
+	})
 }
 
-// sendResetPasswordRoute handles sending a password reset code to the user's email
-func sendResetPasswordRoute(ctx *gin.Context) {
-	// Request binding
+// resendActivationRoute resends the activation code email
+func resendActivationRoute(ctx *gin.Context) {
 	var request db.Partner
 	if err := ctx.ShouldBindJSON(&request); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
 		return
 	}
 
-	email := request.Email
-	verification, exists := verifications[email]
-
-	// Check verification status and cooldown period
-	if exists && verification.ExpiresAt.Before(time.Now()) {
-		verification.ExpiresAt = time.Now().Add(time.Hour)
-		verification.Code = strconv.Itoa(int(util.RandomInt(100000, 999999)))
-	} else if exists && !time.Now().After(verification.AgainAt) {
-		ctx.JSON(http.StatusOK, gin.H{"sent": false})
+	if !IsValidEmail(request.Email) {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEmail})
 		return
 	}
 
-	// Find the user
-	exists, err := queries.CheckUserEmail(ctx, email)
+	exists, err := queries.CheckUserEmail(ctx, request.Email)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEmailCheck.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEmailCheck})
 		return
 	}
 
 	if !exists {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "User doesn't exist"})
+		ctx.JSON(http.StatusOK, gin.H{"message": RespResetEmailSent, "sent": false})
 		return
 	}
 
-	// Need GetPartnerByEmail to send reset email
-	ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Implementation error: GetPartnerByEmail not available"})
-	return
+	partner, err := queries.GetPartnerByEmail(ctx, request.Email)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrUserRetrievalFailed})
+		return
+	}
+
+	if partner.Active {
+		ctx.JSON(http.StatusOK, gin.H{"message": RespAccountAlreadyActive, "sent": false})
+		return
+	}
+
+	verification, exists := verifications[request.Email]
+	resend := true
+
+	if exists {
+		if verification.ExpiresAt.Before(time.Now()) {
+			verification.ExpiresAt = time.Now().Add(time.Hour)
+			verification.Code = strconv.Itoa(int(util.RandomInt(100000, 999999)))
+			verification.Type = "Activation"
+		} else if !time.Now().After(verification.AgainAt) {
+			resend = false
+		}
+		verification.AgainAt = time.Now().Add(time.Minute * 2)
+		verifications[request.Email] = verification
+	} else {
+		verification = *createNewVerification(request.Email)
+	}
+
+	if resend {
+		verification.resendVerificationEmail(request.Email)
+		ctx.JSON(http.StatusOK, gin.H{"message": RespVerificationResent, "sent": true})
+	} else {
+		ctx.JSON(http.StatusOK, gin.H{"message": RespVerificationResendCooldown, "sent": false, "wait_until": verification.AgainAt})
+	}
 }
 
-// passwordResetRoute handles the verification of a password reset request
+// sendResetPasswordRoute sends a password reset code
+func sendResetPasswordRoute(ctx *gin.Context) {
+	var request db.Partner
+	if err := ctx.ShouldBindJSON(&request); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
+		return
+	}
+
+	if !IsValidEmail(request.Email) {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEmail})
+		return
+	}
+
+	exists, err := queries.CheckUserEmail(ctx, request.Email)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEmailCheck})
+		return
+	}
+
+	if !exists {
+		ctx.JSON(http.StatusOK, gin.H{"message": "If a user with this email exists, a password reset email has been sent.", "sent": true})
+		return
+	}
+
+	verification, exists := verifications[request.Email]
+	if exists {
+		if verification.ExpiresAt.Before(time.Now()) {
+			verification.ExpiresAt = time.Now().Add(time.Hour)
+			verification.Code = strconv.Itoa(int(util.RandomInt(100000, 999999)))
+			verification.Type = "PasswordReset"
+			verifications[request.Email] = verification
+		} else if !time.Now().After(verification.AgainAt) {
+			ctx.JSON(http.StatusOK, gin.H{"message": "Please wait before requesting another password reset email.", "sent": false, "wait_until": verification.AgainAt})
+			return
+		}
+		verification.AgainAt = time.Now().Add(time.Minute * 2)
+		verifications[request.Email] = verification
+	} else {
+		verification = VerificationData{
+			Code:      strconv.Itoa(int(util.RandomInt(100000, 999999))),
+			ExpiresAt: time.Now().Add(time.Hour),
+			AgainAt:   time.Now().Add(time.Minute * 2),
+			Type:      "PasswordReset",
+		}
+		verifications[request.Email] = verification
+	}
+
+	sendResetCodeEmail(request.Email)
+	ctx.JSON(http.StatusOK, gin.H{"message": "Password reset email sent successfully.", "sent": true})
+}
+
+// passwordResetRoute handles password reset with verification code
 func passwordResetRoute(ctx *gin.Context) {
 	var unverified NewPassword
 	if err := ctx.ShouldBindJSON(&unverified); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
+		return
+	}
+
+	if len(unverified.Password) < 8 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Password must be at least 8 characters long"})
 		return
 	}
 
 	verification, ok := verifications[unverified.Email]
-
-	// Validate verification code
 	if (!ok) || verification.Type != "PasswordReset" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidVerification.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidVerification})
 		return
 	}
 
 	if verification.Code != unverified.Code {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidCode.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidCode})
 		return
 	}
 
 	if verification.ExpiresAt.Before(time.Now()) {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrCodeExpired.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrCodeExpired})
 		return
 	}
 
-	// Change password
 	err := changePassword(ctx, unverified.Email, unverified.Password)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
 		return
 	}
 
-	ctx.Status(http.StatusOK)
+	partner, err := queries.GetPartnerByEmail(ctx, unverified.Email)
+	if err == nil {
+		user := &User{Partner: partner}
+		user.sendResetPasswordEmail()
+	}
+
+	delete(verifications, unverified.Email)
+	ctx.JSON(http.StatusOK, gin.H{"message": "Password has been reset successfully. You can now log in with your new password."})
 }
 
-// ChangePasswordRoute handles the process of changing a user's password after verification
+// ChangePasswordRoute handles password change after successful login
 func ChangePasswordRoute(ctx *gin.Context) {
 	var unverified NewPassword
 	if err := ctx.ShouldBindJSON(&unverified); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
+		return
+	}
+
+	if len(unverified.Password) < 8 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidPasswordFormat})
 		return
 	}
 
 	verification, ok := verifications[unverified.Email]
-
-	// Validate verification code
 	if (!ok) || verification.Type != "PasswordReset" {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidVerification.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidVerification})
 		return
 	}
 
 	if verification.Code != unverified.Code {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidCode.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidCode})
 		return
 	}
 
 	if verification.ExpiresAt.Before(time.Now()) {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrCodeExpired.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrCodeExpired})
 		return
 	}
 
 	err := changePassword(ctx, unverified.Email, unverified.Password)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
 		return
 	}
 
-	ctx.Status(http.StatusOK)
+	delete(verifications, unverified.Email)
+	ctx.JSON(http.StatusOK, gin.H{"message": RespPasswordChangeSuccess})
 }
 
-// changePassword updates a user's password in the database
-func changePassword(ctx context.Context, email string, newPassword string) error {
-	// Need GetPartnerByEmail to implement this
-	return errors.New("Implementation error: GetPartnerByEmail not available")
-}
-
-// accessKey represents an AccessToken paired with the user Email
-type accessKey struct {
-	AccessToken string    `json:"token"`
-	Email       string    `json:"email"`
-	ExpiresAt   time.Time `json:"expires_at"`
-}
-
-// login authenticates a user and provides an access token
-func login(ctx *gin.Context) {
-	// Bind request
-	var credentials db.Partner
-	if err := ctx.ShouldBindJSON(&credentials); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+// resendResetPasswordRoute handles resending password reset emails
+func resendResetPasswordRoute(ctx *gin.Context) {
+	var request db.Partner
+	if err := ctx.ShouldBindJSON(&request); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
 		return
 	}
 
-	// Need GetPartnerByEmail to implement this
-	ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Implementation error: GetPartnerByEmail not available"})
-	return
-}
+	if !IsValidEmail(request.Email) {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEmail})
+		return
+	}
 
-// WebSocket authentication middleware
-func wsAuthMiddleware(maker PasetoMaker) gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		// Get token from query parameter
-		token := ctx.Query("token")
-		if token == "" {
-			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrNoHeader.Error()})
-			return
+	exists, err := queries.CheckUserEmail(ctx, request.Email)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEmailCheck})
+		return
+	}
+
+	if !exists {
+		ctx.JSON(http.StatusOK, gin.H{"message": RespResetEmailSent, "sent": true})
+		return
+	}
+
+	verification, exists := verifications[request.Email]
+	resend := true
+
+	if exists && verification.Type == "PasswordReset" {
+		if verification.ExpiresAt.Before(time.Now()) {
+			verification.ExpiresAt = time.Now().Add(time.Hour)
+			verification.Code = strconv.Itoa(int(util.RandomInt(100000, 999999)))
+		} else if !time.Now().After(verification.AgainAt) {
+			resend = false
 		}
-
-		// Verify the token using your existing PasetoMaker
-		payload, err := maker.VerifyToken(token)
-		if err != nil {
-			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrInvalidToken.Error()})
-			return
+		verification.AgainAt = time.Now().Add(time.Minute * 2)
+		verifications[request.Email] = verification
+	} else {
+		verification = VerificationData{
+			Code:      strconv.Itoa(int(util.RandomInt(100000, 999999))),
+			ExpiresAt: time.Now().Add(time.Hour),
+			AgainAt:   time.Now().Add(time.Minute * 2),
+			Type:      "PasswordReset",
 		}
+		verifications[request.Email] = verification
+	}
 
-		// Set the payload in the context
-		ctx.Set("payload", payload)
-		ctx.Next()
+	if resend {
+		sendResetCodeEmail(request.Email)
+		ctx.JSON(http.StatusOK, gin.H{"message": RespEmailSent, "sent": true})
+	} else {
+		ctx.JSON(http.StatusOK, gin.H{"message": RespVerificationResendCooldown, "sent": false, "wait_until": verification.AgainAt})
 	}
 }
 
-// Initialize auth routes
+// validify validates if a token is still valid
+func validify(ctx *gin.Context) {
+	payload, err := GetPayload(ctx)
+	if err != nil {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": err})
+		return
+	}
+
+	partner, err := queries.GetPartnerByEmail(ctx, payload.Email)
+	if err != nil || !partner.Active {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": ErrAccountNotActive})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"is_valid": true, "expires_at": payload.ExpiryAt})
+}
+
+// RefreshTokenRoute refreshes an existing valid token
+func RefreshTokenRoute(ctx *gin.Context, tokenMaker *PasetoMaker) {
+	payload, err := GetPayload(ctx)
+	if err != nil {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": err})
+		return
+	}
+
+	partner, err := queries.GetPartnerByEmail(ctx, payload.Email)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": ErrUserRetrievalFailed})
+		return
+	}
+
+	if !partner.Active {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": ErrAccountNotActive})
+		return
+	}
+
+	accessToken, err := tokenMaker.CreateToken(&partner)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, accessKey{
+		AccessToken: accessToken,
+		Email:       partner.Email,
+		ExpiresAt:   time.Now().Add(time.Hour * 24),
+	})
+}
+
+// SetupAuthRoutes initializes all auth-related routes
 func SetupAuthRoutes(router *gin.Engine, tokenMaker *PasetoMaker) {
-	// Set up authentication routes
+	// Public routes
 	router.POST("/api/register", register)
-	router.POST("/api/register/activate", ActivateAccountRoute)
+	router.POST("/api/register/activate", func(ctx *gin.Context) {
+		ActivateAccountRoute(ctx, tokenMaker)
+	})
+	router.POST("/api/register/resend", resendActivationRoute)
 	router.POST("/api/reset", sendResetPasswordRoute)
 	router.POST("/api/reset/activate", passwordResetRoute)
-	router.POST("/api/login", login)
+	router.POST("/api/reset/resend", resendResetPasswordRoute)
+	router.POST("/api/login", func(ctx *gin.Context) {
+		login(ctx, tokenMaker)
+	})
 
 	// Protected routes
 	auth := router.Group("/api").Use(authMiddleware(*tokenMaker))
 	auth.POST("/reset/new", ChangePasswordRoute)
-
 	auth.GET("/validify", validify)
+	auth.POST("/refresh-token", func(ctx *gin.Context) {
+		RefreshTokenRoute(ctx, tokenMaker)
+	})
+
+	// WebSocket routes with their own authentication
+	ws := router.Group("/ws").Use(wsAuthMiddleware(*tokenMaker))
+	ws.GET("/connect", handleWebSocketConnection)
 }

@@ -1,18 +1,16 @@
 package util
 
 import (
-	"strings"
+	"regexp"
 )
 
-func CamelCase(name *string) {
-	parts := strings.Split(*name, "_")
-	for i := range parts {
-		parts[i] = strings.Title(parts[i])
-		if parts[i] == "Id" {
-			parts[i] = "ID"
-		}
-	}
-	if parts != nil {
-		*name = strings.Join(parts, "")
-	}
+var emailRegex *regexp.Regexp
+
+func init() {
+	emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+}
+
+// IsValidEmail checks if an email has a valid format
+func IsValidEmail(email string) bool {
+	return emailRegex.MatchString(email)
 }
