@@ -1,0 +1,184 @@
+# Collaborative Editing Implementation
+
+I've implemented a real-time collaborative editing system that allows partners to edit a registry document simultaneously. Here's an overview of what I've done and how to integrate it with your application.
+
+## Features Implemented
+
+1. **Real-time Collaborative Editing**
+   - Multiple partners can edit the same registry document concurrently
+   - Each partner is assigned a unique color for identification
+   - Changes are broadcast to all connected partners in real-time
+
+2. **Cursor and Tab Tracking**
+   - The system tracks each partner's cursor position
+   - Partners can see where others are editing in the document
+   - Tab selection is tracked and synchronized across all partners
+
+3. **Auto-Save Functionality**
+   - Registry content is auto-saved every 30 seconds
+   - Manual save endpoint is available
+   - Content is persisted to your database
+
+## Files Modified/Created
+
+1. **init.go**
+   - Added collaborative editing data structures
+   - Added WebSocket upgrader configuration
+   - Added auto-save functionality
+
+2. **ws.go**
+   - Implemented collaborative editing WebSocket handlers
+   - Added registry management functions
+   - Implemented message broadcasting system
+
+## Integration Steps
+
+### 1. Update Your Code
+
+1. Add the following line to your `go.mod` file:
+   ```
+   github.com/gorilla/websocket v1.5.0
+   ```
+
+2. Run:
+   ```bash
+   go get github.com/gorilla/websocket
+   ```
+
+### 2. Update Authentication Setup
+
+In your `auth.go` file, find the `SetupAuthRoutes` function and add this line at the end:
+
+```go
+// At the end of SetupAuthRoutes function
+wsInit(router, tokenMaker)
+```
+
+### 3. Add Database Support
+
+You need to implement database storage for registry documents. Look for these functions in the code:
+
+- `saveRegistryToDatabase`: Saves a registry document to your database
+- `loadRegistryFromDatabase`: Loads a registry document from your database
+
+Modify these to work with your database schema.
+
+## Using the Collaborative Editor
+
+### Backend API Endpoints
+
+1. **Join Editor Session**
+   - WebSocket: `/ws/editor/join?registry_id=<id>&token=<token>`
+   - Allows a partner to join a collaborative editing session
+
+2. **Leave Editor Session**
+   - WebSocket: `/ws/editor/leave?registry_id=<id>&token=<token>`
+   - Allows a partner to leave a session
+
+3. **Save Registry**
+   - HTTP POST: `/api/editor/save?registry_id=<id>`
+   - Manually saves the current state of a registry
+
+4. **Get Active Editors**
+   - HTTP GET: `/api/editor/active?registry_id=<id>`
+   - Returns information about all partners currently editing a registry
+
+### Message Format
+
+Messages exchanged over WebSocket have the following format:
+
+```json
+{
+  "type": "edit|cursor_move|tab_change|join|leave|full_document",
+  "content": "document content when type is edit or full_document",
+  "cursor_pos": { "line": 0, "column": 0 },
+  "partner_id": 123,
+  "email": "partner@example.com",
+  "color": "#FF5733",
+  "tab": 1
+}
+```
+
+## Frontend Integration
+
+To integrate with your frontend, use code similar to:
+
+```javascript
+// Connect to WebSocket
+const token = "your_auth_token";
+const registryID = "your_registry_id";
+const ws = new WebSocket(`ws://your-server/ws/editor/join?registry_id=${registryID}&token=${token}`);
+
+// Handle incoming messages
+ws.onmessage = (event) => {
+  const message = JSON.parse(event.data);
+  
+  switch (message.type) {
+    case "full_document":
+      // Initial document load
+      editor.setValue(message.content);
+      break;
+    
+    case "edit":
+      // Document was edited by another partner
+      editor.setValue(message.content);
+      break;
+    
+    case "cursor_move":
+      // Another partner moved their cursor
+      displayPartnerCursor(message.partner_id, message.email, message.cursor_pos, message.color);
+      break;
+    
+    case "join":
+      // New partner joined
+      addPartnerToList(message.partner_id, message.email, message.color);
+      break;
+    
+    case "leave":
+      // Partner left
+      removePartnerFromList(message.partner_id);
+      break;
+    
+    case "tab_change":
+      // Partner changed tabs
+      updatePartnerTab(message.partner_id, message.tab);
+      break;
+  }
+};
+
+// Send edit when document changes
+editor.on("change", () => {
+  const content = editor.getValue();
+  ws.send(JSON.stringify({
+    type: "edit",
+    content: content
+  }));
+});
+
+// Send cursor position when it changes
+editor.on("cursorActivity", () => {
+  const position = editor.getCursor();
+  ws.send(JSON.stringify({
+    type: "cursor_move",
+    cursor_pos: { line: position.line, column: position.ch }
+  }));
+});
+
+// Send tab change
+function changeTab(tabNumber) {
+  ws.send(JSON.stringify({
+    type: "tab_change",
+    tab: tabNumber
+  }));
+}
+```
+
+## Customization Options
+
+You can customize the system by modifying:
+
+1. **Auto-save Interval**: Change `autosaveInterval` in init.go
+2. **Partner Colors**: Modify `partnerColorPalette` in ws.go
+3. **Message Types**: Add new message types in the constants section
+
+The system is designed to be extensible, so you can add more features as needed.

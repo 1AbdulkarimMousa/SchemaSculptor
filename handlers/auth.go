@@ -28,6 +28,7 @@ const (
 // Payload represents the token payload structure
 type Payload struct {
 	ID        uuid.UUID `json:"id"`
+	Name      string    `json:"name"`
 	PartnerID int32     `json:"partner_id"`
 	Email     string    `json:"email"`
 	CreatedAt time.Time `json:"created_at"`
@@ -35,7 +36,7 @@ type Payload struct {
 }
 
 // NewPayload creates a new token payload with specified email and partner ID
-func NewPayload(email string, partnerID int32) (*Payload, error) {
+func NewPayload(name string, email string, partnerID int32) (*Payload, error) {
 	tokenID, err := uuid.NewRandom()
 	if err != nil {
 		return nil, err
@@ -43,6 +44,7 @@ func NewPayload(email string, partnerID int32) (*Payload, error) {
 
 	payload := &Payload{
 		ID:        tokenID,
+		Name:      name,
 		PartnerID: partnerID,
 		Email:     email,
 		CreatedAt: time.Now(),
@@ -59,36 +61,36 @@ func (payload *Payload) Valid() error {
 	return nil
 }
 
-// PasetoMaker handles PASETO token creation and verification
-type PasetoMaker struct {
+// pasetoMaker handles PASETO token creation and verification
+type pasetoMaker struct {
 	paseto       *paseto.V2
 	symmetricKey []byte
 }
 
-// NewPaseto creates a new PasetoMaker with the given symmetric key
-func NewPaseto(symmetricKey string) (*PasetoMaker, error) {
+// newPaseto creates a new pasetoMaker with the given symmetric key
+func newPaseto(symmetricKey string) (*pasetoMaker, error) {
 	if len(symmetricKey) != chacha20poly1305.KeySize {
 		return nil, fmt.Errorf("SymmetricKey too short should be: %v", chacha20poly1305.KeySize)
 	}
 
-	maker := &PasetoMaker{
+	maker := &pasetoMaker{
 		paseto:       paseto.NewV2(),
 		symmetricKey: []byte(symmetricKey),
 	}
 	return maker, nil
 }
 
-// CreateToken generates a new token for a partner
-func (maker *PasetoMaker) CreateToken(partner *db.Partner) (string, error) {
-	payload, err := NewPayload(partner.Email, partner.ID)
+// createToken generates a new token for a partner
+func (maker *pasetoMaker) createToken(partner *db.Partner) (string, error) {
+	payload, err := NewPayload(partner.Name, partner.Email, partner.ID)
 	if err != nil {
 		return "", err
 	}
 	return maker.paseto.Encrypt(maker.symmetricKey, payload, nil)
 }
 
-// VerifyToken validates a token and returns its payload
-func (maker *PasetoMaker) VerifyToken(token string) (*Payload, error) {
+// verifyToken validates a token and returns its payload
+func (maker *pasetoMaker) verifyToken(token string) (*Payload, error) {
 	payload := &Payload{}
 	err := maker.paseto.Decrypt(token, maker.symmetricKey, payload, nil)
 	if err != nil {
@@ -137,7 +139,7 @@ func createNewVerification(email string) *VerificationData {
 }
 
 // authMiddleware verifies the authentication token in the request
-func authMiddleware(maker PasetoMaker) gin.HandlerFunc {
+func authMiddleware() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		authHeader := ctx.GetHeader(authorizationHeaderKey)
 		if authHeader == "" {
@@ -159,7 +161,7 @@ func authMiddleware(maker PasetoMaker) gin.HandlerFunc {
 		}
 
 		token := fields[1]
-		payload, err := maker.VerifyToken(token)
+		payload, err := tokenMaker.verifyToken(token)
 		if err != nil {
 			if err.Error() == ErrTokenExpired {
 				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrTokenExpired, "code": "token_expired"})
@@ -172,43 +174,6 @@ func authMiddleware(maker PasetoMaker) gin.HandlerFunc {
 		ctx.Set("payload", payload)
 		ctx.Next()
 	}
-}
-
-// wsAuthMiddleware handles websocket authentication via token
-func wsAuthMiddleware(maker PasetoMaker) gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		token := ctx.Query("token")
-		if token == "" {
-			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrNoHeader})
-			return
-		}
-
-		payload, err := maker.VerifyToken(token)
-		if err != nil {
-			if err.Error() == ErrTokenExpired {
-				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrTokenExpired, "code": "token_expired"})
-			} else {
-				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrInvalidToken})
-			}
-			return
-		}
-
-		ctx.Set("payload", payload)
-		ctx.Next()
-	}
-}
-
-// GetPayload retrieves partner information from context
-func GetPayload(ctx *gin.Context) (*Payload, error) {
-	payload, ok := ctx.Get("payload")
-	if !ok {
-		return nil, errors.New(ErrPayloadNotFound)
-	}
-	typedPayload, ok := payload.(*Payload)
-	if !ok {
-		return nil, errors.New(ErrInvalidPayload)
-	}
-	return typedPayload, nil
 }
 
 // changePassword updates a user's password in the database
@@ -325,7 +290,7 @@ func register(ctx *gin.Context) {
 }
 
 // login authenticates a user and provides an access token
-func login(ctx *gin.Context, tokenMaker *PasetoMaker) {
+func login(ctx *gin.Context, tokenMaker *pasetoMaker) {
 	var credentials db.Partner
 	if err := ctx.ShouldBindJSON(&credentials); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
@@ -348,7 +313,7 @@ func login(ctx *gin.Context, tokenMaker *PasetoMaker) {
 		return
 	}
 
-	accessToken, err := tokenMaker.CreateToken(&partner)
+	accessToken, err := tokenMaker.createToken(&partner)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err})
 		return
@@ -362,7 +327,7 @@ func login(ctx *gin.Context, tokenMaker *PasetoMaker) {
 }
 
 // ActivateAccountRoute activates a newly registered account
-func ActivateAccountRoute(ctx *gin.Context, tokenMaker *PasetoMaker) {
+func ActivateAccountRoute(ctx *gin.Context, tokenMaker *pasetoMaker) {
 	var unverified VerificationActivation
 	if err := ctx.ShouldBindJSON(&unverified); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
@@ -407,7 +372,7 @@ func ActivateAccountRoute(ctx *gin.Context, tokenMaker *PasetoMaker) {
 	}
 
 	delete(verifications, unverified.Email)
-	accessToken, err := tokenMaker.CreateToken(&partner)
+	accessToken, err := tokenMaker.createToken(&partner)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err})
 		return
@@ -576,8 +541,8 @@ func passwordResetRoute(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"message": "Password has been reset successfully. You can now log in with your new password."})
 }
 
-// ChangePasswordRoute handles password change after successful login
-func ChangePasswordRoute(ctx *gin.Context) {
+// changePasswordRoute handles password change after successful login
+func changePasswordRoute(ctx *gin.Context) {
 	var unverified NewPassword
 	if err := ctx.ShouldBindJSON(&unverified); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err})
@@ -669,6 +634,19 @@ func resendResetPasswordRoute(ctx *gin.Context) {
 	}
 }
 
+// GetPayload retrieves partner information from context
+func GetPayload(ctx *gin.Context) (*Payload, error) {
+	payload, ok := ctx.Get("payload")
+	if !ok {
+		return nil, errors.New(ErrPayloadNotFound)
+	}
+	typedPayload, ok := payload.(*Payload)
+	if !ok {
+		return nil, errors.New(ErrInvalidPayload)
+	}
+	return typedPayload, nil
+}
+
 // validify validates if a token is still valid
 func validify(ctx *gin.Context) {
 	payload, err := GetPayload(ctx)
@@ -687,7 +665,7 @@ func validify(ctx *gin.Context) {
 }
 
 // RefreshTokenRoute refreshes an existing valid token
-func RefreshTokenRoute(ctx *gin.Context, tokenMaker *PasetoMaker) {
+func refreshTokenRoute(ctx *gin.Context) {
 	payload, err := GetPayload(ctx)
 	if err != nil {
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": err})
@@ -705,7 +683,7 @@ func RefreshTokenRoute(ctx *gin.Context, tokenMaker *PasetoMaker) {
 		return
 	}
 
-	accessToken, err := tokenMaker.CreateToken(&partner)
+	accessToken, err := tokenMaker.createToken(&partner)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err})
 		return
@@ -718,8 +696,34 @@ func RefreshTokenRoute(ctx *gin.Context, tokenMaker *PasetoMaker) {
 	})
 }
 
-// SetupAuthRoutes initializes all auth-related routes
-func SetupAuthRoutes(router *gin.Engine, tokenMaker *PasetoMaker) {
+func wsAuthMiddleware() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		// Get token from query parameter
+		token := ctx.Query("token")
+		if token == "" {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrMissingToken})
+			return
+		}
+
+		// Verify the token using your existing PasetoMaker
+		payload, err := tokenMaker.verifyToken(token)
+		if err != nil {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": ErrInvalidToken})
+			return
+		}
+
+		// Set the payload in the context
+		ctx.Set("payload", payload)
+		ctx.Next()
+	}
+}
+
+// initialize token maker and auth router with auth routes
+func init() {
+	tokenMaker, _ = newPaseto(util.PasetoKey)
+	// Initialize router
+	router = gin.Default()
+
 	// Public routes
 	router.POST("/api/register", register)
 	router.POST("/api/register/activate", func(ctx *gin.Context) {
@@ -734,14 +738,10 @@ func SetupAuthRoutes(router *gin.Engine, tokenMaker *PasetoMaker) {
 	})
 
 	// Protected routes
-	auth := router.Group("/api").Use(authMiddleware(*tokenMaker))
-	auth.POST("/reset/new", ChangePasswordRoute)
+	auth := router.Group("/api").Use(authMiddleware())
+	auth.POST("/reset/new", changePasswordRoute)
 	auth.GET("/validify", validify)
-	auth.POST("/refresh-token", func(ctx *gin.Context) {
-		RefreshTokenRoute(ctx, tokenMaker)
-	})
+	auth.POST("/refresh-token", refreshTokenRoute)
 
-	// WebSocket routes with their own authentication
-	ws := router.Group("/ws").Use(wsAuthMiddleware(*tokenMaker))
-	ws.GET("/connect", handleWebSocketConnection)
+	wsInit() // sequential initialization for router then ws
 }

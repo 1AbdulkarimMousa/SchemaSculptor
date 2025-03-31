@@ -61,6 +61,7 @@ go-get:
 	go get github.com/gorilla/websocket
 	go get github.com/hpcloud/tail
 	go get github.com/mattn/go-sqlite3
+	github.com/gorilla/websocket
 	
 # Run tests
 .PHONY: test

@@ -9,11 +9,12 @@ replace github.com/1AbdulkarimMousa/SchemaSculptor/util => ./../util
 go 1.22.2
 
 require (
-	github.com/aead/chacha20poly1305 v0.0.0-20201124145622-1a5aba2a8b29
 	github.com/1AbdulkarimMousa/SchemaSculptor/db v0.0.0-00010101000000-000000000000
 	github.com/1AbdulkarimMousa/SchemaSculptor/util v0.0.0-00010101000000-000000000000
+	github.com/aead/chacha20poly1305 v0.0.0-20201124145622-1a5aba2a8b29
 	github.com/gin-gonic/gin v1.10.0
 	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/lib/pq v1.10.9
 	github.com/o1egl/paseto v1.0.0
 	github.com/valyala/fasttemplate v1.2.2

@@ -14,6 +14,7 @@ const (
 	// Authentication errors
 	ErrNoHeader           = "no authorization header was provided"
 	ErrInvalidBearer      = "invalid or missing Bearer token"
+	ErrMissingToken       = "missing token from query parameter"
 	ErrUnsupportedAuth    = "authorization type not supported"
 	ErrInvalidToken       = "access token not valid"
 	ErrTokenExpired       = "token has expired"
