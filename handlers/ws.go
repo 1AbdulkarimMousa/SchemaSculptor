@@ -179,6 +179,7 @@ func loadRegistryIfNeeded(registryID string) {
 
 // loadRegistryFromDatabase loads a registry from the database
 func loadRegistryFromDatabase(registryID string) ([]byte, error) {
+	_ = registryID
 	// TODO: Implement database loading logic
 	// This is a placeholder. You need to implement the actual database query.
 	//
