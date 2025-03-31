@@ -25,7 +25,7 @@ Finally, as LLM coding models gain traction in the industry, and as unexperience
 1. Clone the repository:
    ```bash
    git clone https://github.com/your-username/valutoria.git
-   cd valutoria
+   cd appname
    ```
 
 2. Create an `.env` file:
