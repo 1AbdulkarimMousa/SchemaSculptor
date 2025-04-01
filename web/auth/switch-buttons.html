@@ -1,0 +1,23 @@
+<!-- CARD NAV -->
+<div class="d-flex border-0 p-0 m-0 rounded-top">
+	<button
+		class="flex-grow-1 border-0 py-3 rounded-top-left"
+		:class="{ 
+        'bg-primary text-white': card == 'login', 
+        'bg-dark text-light': card != 'login' 
+      }"
+		@click="card = 'login'"
+	>
+		Login
+	</button>
+	<button
+		class="flex-grow-1 border-0 py-3 rounded-top-right"
+		:class="{ 
+        'bg-success text-white': card == 'register', 
+        'bg-dark text-light': card != 'register' 
+      }"
+		@click="card = 'register'"
+	>
+		Register
+	</button>
+</div>

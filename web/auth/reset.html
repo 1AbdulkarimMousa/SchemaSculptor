@@ -1,0 +1,135 @@
+<!-- RESET PASSWORD -->
+<div
+	class="px-4 py-5 text-left"
+	x-show="card == 'reset'"
+>
+	<h3 class="mb-3 text-light">Reset Password</h3>
+	<div class="mb-3">
+		<label
+			for="resetEmail"
+			class="form-label text-light"
+			>Email</label
+		>
+		<input
+			type="email"
+			id="resetEmail"
+			x-model="email"
+			class="form-control bg-dark text-light border-secondary"
+			placeholder="Enter your email..."
+			@blur="email = email.trim()"
+		/>
+	</div>
+
+	<div class="mb-3">
+		<label class="form-label text-light">Reset Code</label>
+		<div class="d-flex justify-content-between">
+			<template
+				x-for="(digit, index) in resetCode"
+				:key="index"
+			>
+				<input
+					type="text"
+					maxlength="1"
+					class="form-control bg-dark text-light text-center border-secondary"
+					x-model="resetCode[index]"
+					style="width: 50px"
+					@input="handleResetInput($event, index)"
+					@keydown="handleResetKeyDown($event, index)"
+					@paste="handleResetPaste($event)"
+					@focus="$event.target.select()"
+				/>
+			</template>
+
+			<!-- Initial green "Send Code" button -->
+			<button
+				x-show="!resetCodeSent"
+				type="button"
+				class="btn btn-success ms-2"
+				:disabled="email.trim() == ''"
+				@click="
+          resetCodeSent = true;
+          resetResendDisabled = true;
+          await $store.auth.sendResetPassword(email.trim());
+          resetCountdown = 60;
+          let timer = setInterval(() => {
+            resetCountdown--;
+            if (resetCountdown === 0) {
+              clearInterval(timer);
+              resetResendDisabled = false;
+            }
+          }, 1000);"
+			>
+				Send Code
+			</button>
+
+			<!-- Red "Resend Code" button (appears after first send) -->
+			<button
+				x-show="resetCodeSent"
+				type="button"
+				class="btn btn-danger ms-2"
+				:disabled="resetResendDisabled"
+				@click="
+          resetResendDisabled = true;
+          resetCountdown = 60;
+          let timer = setInterval(() => {
+            resetCountdown--;
+            if (resetCountdown === 0) {
+              clearInterval(timer);
+              resetResendDisabled = false;
+            }
+          }, 1000);
+          await $store.auth.requestPasswordReset(email.trim());"
+			>
+				<span x-text="`Resend in ${resetCountdown}s`"></span>
+			</button>
+		</div>
+	</div>
+	<div
+		class="mb-3"
+		x-show="resetCodeSent"
+	>
+		<label
+			for="newResetPassword"
+			class="form-label text-light"
+			>New Password</label
+		>
+		<input
+			class="form-control bg-dark text-light border-secondary"
+			id="newResetPassword"
+			type="password"
+			x-model="newResetPassword"
+			placeholder="New Password"
+		/>
+	</div>
+	<div
+		class="mb-3"
+		x-show="resetCodeSent"
+	>
+		<label
+			for="confirmNewResetPassword"
+			class="form-label text-light"
+			>Confirm New Password</label
+		>
+		<input
+			class="form-control bg-dark text-light border-secondary"
+			id="confirmNewResetPassword"
+			type="password"
+			x-model="confirmNewResetPassword"
+			placeholder="Confirm New Password"
+		/>
+		<div
+			class="text-danger"
+			x-show="newResetPassword != confirmNewResetPassword && confirmNewResetPassword.length > 0"
+		>
+			Passwords do not match
+		</div>
+	</div>
+	<p class="text-left mt-3">
+		<a
+			href="#"
+			class="text-info"
+			@click.prevent="card = 'login'"
+			>Back to Login</a
+		>
+	</p>
+</div>

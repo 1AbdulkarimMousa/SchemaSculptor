@@ -1,0 +1,142 @@
+<!-- REGISTER -->
+<div
+	class="px-4 py-5 text-left"
+	x-show="card == 'register'"
+>
+	<h3 class="mb-3 text-light">Register</h3>
+	<div class="mb-3 row">
+		<div class="col-md-6">
+			<label
+				for="registerName"
+				class="form-label text-light"
+				>Name</label
+			>
+			<input
+				type="text"
+				id="registerName"
+				x-model="name"
+				class="form-control bg-dark text-light border-secondary"
+				placeholder="Your Name..."
+				@blur="name = name.trim()"
+			/>
+		</div>
+		<div class="col-md-6">
+			<label
+				for="registerEmail"
+				class="form-label text-light"
+				>Email</label
+			>
+			<input
+				type="email"
+				id="registerEmail"
+				x-model="email"
+				class="form-control bg-dark text-light border-secondary"
+				placeholder="Email..."
+				x-on:change="email = email.trim().toLowerCase()"
+			/>
+		</div>
+	</div>
+	<div class="mb-3">
+		<label
+			for="registerPassword"
+			class="form-label text-light"
+			>Password</label
+		>
+		<input
+			type="password"
+			id="registerPassword"
+			x-model="password"
+			class="form-control bg-dark text-light border-secondary"
+			placeholder="Password..."
+		/>
+	</div>
+	<div class="mb-3">
+		<label
+			for="registerConfirmPassword"
+			class="form-label text-light"
+			>Confirm Password</label
+		>
+		<input
+			type="password"
+			id="registerConfirmPassword"
+			x-model="confirmPassword"
+			class="form-control bg-dark text-light border-secondary"
+			placeholder="Confirm Password..."
+		/>
+		<div
+			class="text-danger"
+			x-show="password != confirmPassword && confirmPassword.length > 0"
+		>
+			Passwords do not match
+		</div>
+	</div>
+	<div class="mb-3">
+		<label class="form-label text-light">Verification Code</label>
+		<div class="d-flex justify-content-between">
+			<template
+				x-for="(digit, index) in code"
+				:key="index"
+			>
+				<input
+					type="text"
+					maxlength="1"
+					class="form-control bg-dark text-light text-center border-secondary"
+					x-model="code[index]"
+					style="width: 50px"
+					@input="handleInput($event, index)"
+					@keydown="handleKeyDown($event, index)"
+					@paste="handlePaste($event)"
+					@focus="$event.target.select()"
+				/>
+			</template>
+
+			<!-- Initial green "Send Code" button -->
+			<button
+				x-show="!codeSent"
+				type="button"
+				class="btn btn-success ms-2"
+				:disabled="
+          name.trim() == '' ||
+          email.trim() == '' ||
+          password.trim() == '' || 
+          password != confirmPassword"
+				@click="
+          codeSent = true; 
+          resendDisabled = true; 
+          await $store.auth.register(email.trim(), password, name.trim());
+          countdown = 60; 
+          let timer = setInterval(() => { 
+            countdown--; 
+            if (countdown === 0) { 
+              clearInterval(timer); 
+              resendDisabled = false; 
+            } 
+          }, 1000);"
+			>
+				Send Code
+			</button>
+
+			<!-- Red "Resend Code" button (appears after first send) -->
+			<button
+				x-show="codeSent"
+				type="button"
+				class="btn btn-danger ms-2"
+				:disabled="resendDisabled"
+				@click="
+          resendDisabled = true;
+          countdown = 60; 
+          let timer = setInterval(() => { 
+            countdown--; 
+            if (countdown === 0) { 
+              clearInterval(timer); 
+              resendDisabled = false; 
+            } 
+          }, 1000);
+          resendDisabled = false;
+          codeSent = false;"
+			>
+				<span x-text="`Resend in ${countdown}s`"></span>
+			</button>
+		</div>
+	</div>
+</div>

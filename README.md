@@ -23,24 +23,19 @@ Finally, as LLM coding models gain traction in the industry, and as unexperience
 ## Getting Started
 
 1. Clone the repository:
-   ```bash
-<<<<<<< HEAD
-   git clone https://github.com/your-username/valutoria.git
-   cd appname
-=======
+   ```
    git clone https://github.com/1AbdulkarimMousa/SchemaSculptor
    cd sculptor
->>>>>>> bf8e919 (Finest Auth)
    ```
 
 2. Create an `.env` file:
-   ```bash
+   ```
    make .env
    ```
    This creates a default `.env` file. You should edit it with your actual configuration values.
 
 3. Run the full setup:
-   ```bash
+   ```
    make setup
    ```
    This will set up everything using values from your `.env` file.

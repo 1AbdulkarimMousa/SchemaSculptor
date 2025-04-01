@@ -1,0 +1,44 @@
+<!-- LOGIN -->
+<div
+	class="px-4 py-5 text-left"
+	x-show="card == 'login'"
+>
+	<h3 class="mb-3 text-light">Login</h3>
+	<div class="mb-3">
+		<label
+			for="loginEmail"
+			class="form-label text-light"
+			>Email</label
+		>
+		<input
+			type="email"
+			id="loginEmail"
+			x-model="email"
+			class="form-control bg-dark text-light border-secondary"
+			placeholder="Email..."
+			x-on:change="email = email.trim().toLowerCase()"
+		/>
+	</div>
+	<div class="mb-3">
+		<label
+			for="loginPassword"
+			class="form-label text-light"
+			>Password</label
+		>
+		<input
+			type="password"
+			id="loginPassword"
+			x-model="password"
+			class="form-control bg-dark text-light border-secondary"
+			placeholder="Password..."
+		/>
+	</div>
+	<p class="text-left mt-3">
+		<a
+			href="#"
+			class="text-info"
+			@click.prevent="card = 'reset'"
+			>Forgot Password?</a
+		>
+	</p>
+</div>

@@ -1,0 +1,58 @@
+<!-- BUTTON GROUP -->
+<div class="d-flex border-0 p-0 m-0">
+	<!-- login btn -->
+	<button
+		x-show="card == 'login'"
+		type="submit"
+		class="btn btn-primary w-100 py-3 rounded-bottom"
+		@click="validateLogin() && $store.auth.login(email.trim(), password)"
+	>
+		Log in
+	</button>
+
+	<!-- register btn -->
+	<button
+		x-show="card == 'register'"
+		type="submit"
+		:class="{
+        'btn btn-success w-100 py-3 rounded-bottom': validateRegister(),
+        'btn btn-secondary w-100 py-3 rounded-bottom text-dark': !validateRegister()
+      }"
+		:disabled="!validateRegister()"
+		@click="
+        if (validateRegister()) {
+          await $store.auth.activate(email.trim(), getFullCode());
+        }"
+	>
+		Register
+	</button>
+
+	<!-- reset btn -->
+	<button
+		x-show="card == 'reset'"
+		type="submit"
+		class="btn btn-warning text-dark w-100 py-3 rounded-bottom"
+		x-bind:disabled="!(newResetPassword && 
+                 confirmNewResetPassword && 
+                 newResetPassword === confirmNewResetPassword && 
+                 newResetPassword.length >= 6 &&
+                 resetCodeSent &&
+                 isResetCodeComplete())"
+		x-bind:class="!(newResetPassword && 
+                confirmNewResetPassword && 
+                newResetPassword === confirmNewResetPassword && 
+                newResetPassword.length >= 6 &&
+                resetCodeSent &&
+                isResetCodeComplete()) ? 'opacity-50' : ''"
+		@click="if(validateResetPassword()) { 
+          await $store.auth.resetPassword(email.trim(), getFullResetCode(), newResetPassword);
+          card = 'login';
+          newResetPassword = '';
+          confirmNewResetPassword = '';
+          resetCode = ['', '', '', '', '', ''];
+          resetCodeSent = false;
+      }"
+	>
+		Reset Password
+	</button>
+</div>

@@ -1,0 +1,189 @@
+<div
+	x-show="$store.auth.authFormVisible"
+	x-init="$store.auth.isLoggedIn()"
+	x-data="{
+    card: 'login',
+    name: '', 
+    email: '', 
+    password: '', 
+    confirmPassword: '', 
+    code: ['', '', '', '', '', ''],
+    codeSent: false,
+    resendDisabled: false,
+    countdown: 60,
+    newResetPassword: '',
+    confirmNewResetPassword: '',
+    resetCode: ['', '', '', '', '', ''],
+    resetCodeSent: false,
+    resetResendDisabled: false,
+    resetCountdown: 60,
+    
+    handleInput(event, index) {
+      if (event.target.value.length === 1) {
+        const nextInput = event.target.nextElementSibling;
+        if (nextInput && nextInput.tagName === 'INPUT') {
+          nextInput.focus();
+        }
+      }
+    },
+    
+    handleKeyDown(event, index) {
+      if (event.key === 'Backspace' && event.target.value.length === 0) {
+        const prevInput = event.target.previousElementSibling;
+        if (prevInput && prevInput.tagName === 'INPUT') {
+          prevInput.focus();
+        }
+      } else if (event.key === 'ArrowLeft') {
+        const prevInput = event.target.previousElementSibling;
+        if (prevInput && prevInput.tagName === 'INPUT') {
+          prevInput.focus();
+        }
+      } else if (event.key === 'ArrowRight') {
+        const nextInput = event.target.nextElementSibling;
+        if (nextInput && nextInput.tagName === 'INPUT') {
+          nextInput.focus();
+        }
+      }
+    },
+    
+    handlePaste(event) {
+      event.preventDefault();
+      const pastedText = (event.clipboardData || window.clipboardData)
+      .getData('text')
+      .replace(/[^0-9a-zA-Z]/g, '')
+      .slice(0, this.code.length);
+      
+      const inputs = event.target.parentElement.querySelectorAll('input');
+      
+      [...pastedText].forEach((char, i) => {
+        if (i < this.code.length) {
+          this.code[i] = char;
+        }
+      });
+      
+      const nextIndex = Math.min(pastedText.length, this.code.length - 1);
+      if (inputs[nextIndex]) {
+        inputs[nextIndex].focus();
+      }
+    },
+    
+    getFullCode() {
+      return this.code.join('');
+    },
+    
+    isCodeComplete() {
+      return this.code.every(digit => digit.trim() !== '');
+    },
+    
+    handleResetInput(event, index) {
+      if (event.target.value.length === 1) {
+        const nextInput = event.target.nextElementSibling;
+        if (nextInput && nextInput.tagName === 'INPUT') {
+          nextInput.focus();
+        }
+      }
+    },
+    
+    handleResetKeyDown(event, index) {
+      if (event.key === 'Backspace' && event.target.value.length === 0) {
+        const prevInput = event.target.previousElementSibling;
+        if (prevInput && prevInput.tagName === 'INPUT') {
+          prevInput.focus();
+        }
+      } else if (event.key === 'ArrowLeft') {
+        const prevInput = event.target.previousElementSibling;
+        if (prevInput && prevInput.tagName === 'INPUT') {
+          prevInput.focus();
+        }
+      } else if (event.key === 'ArrowRight') {
+        const nextInput = event.target.nextElementSibling;
+        if (nextInput && nextInput.tagName === 'INPUT') {
+          nextInput.focus();
+        }
+      }
+    },
+    
+    handleResetPaste(event) {
+      event.preventDefault();
+      const pastedText = (event.clipboardData || window.clipboardData)
+        .getData('text')
+        .replace(/[^0-9a-zA-Z]/g, '')
+        .slice(0, this.resetCode.length);
+      
+      const inputs = event.target.parentElement.querySelectorAll('input');
+      
+      [...pastedText].forEach((char, i) => {
+        if (i < this.resetCode.length) {
+          this.resetCode[i] = char;
+        }
+      });
+      
+      const nextIndex = Math.min(pastedText.length, this.resetCode.length - 1);
+      if (inputs[nextIndex]) {
+        inputs[nextIndex].focus();
+      }
+    },
+    
+    getFullResetCode() {
+      return this.resetCode.join('');
+    },
+    
+    isResetCodeComplete() {
+      return this.resetCode.every(digit => digit.trim() !== '');
+    },
+    
+    validateLogin() {
+      return this.email.trim() !== '' && this.password.trim() !== '';
+    },
+    
+    validateRegister() {
+      const basicValidation = this.name.trim() !== '' && 
+             this.email.trim() !== '' && 
+             this.password.trim() !== '' && 
+             this.password === this.confirmPassword;
+      
+      return basicValidation && this.isCodeComplete() && this.codeSent;
+    },
+    
+    validateReset() {
+      return this.email.trim() !== '';
+    },
+    
+    validateResetPassword() {
+      const passwordsValid = this.newResetPassword.trim() !== '' && 
+                this.confirmNewResetPassword.trim() !== '' && 
+                this.newResetPassword === this.confirmNewResetPassword &&
+                this.newResetPassword.length >= 6;
+      
+      return passwordsValid && this.isResetCodeComplete() && this.resetCodeSent;
+    },
+    
+    startResetCountdown() {
+      this.resetResendDisabled = true;
+      this.resetCountdown = 60;
+      
+      const timer = setInterval(() => {
+        this.resetCountdown--;
+        
+        if (this.resetCountdown <= 0) {
+          clearInterval(timer);
+          this.resetResendDisabled = false;
+        }
+      }, 1000);
+    }
+  }"
+	class="container pt-5"
+>
+	<div class="row justify-content-center">
+		<div class="col-11 col-md-7 bg-dark p-0 m-0 rounded shadow">
+			<!-- Navigation tabs loaded dynamically -->
+			<div x-html="(await axios.get('/views/auth/auth-nav.html')).data"></div>
+
+			<!-- Dynamic content area based on selected card -->
+			<div x-html="(await axios.get(`/views/auth/auth-${card}.html`)).data"></div>
+
+			<!-- Action buttons loaded dynamically -->
+			<div x-html="(await axios.get('/views/auth/auth-buttons.html')).data"></div>
+		</div>
+	</div>
+</div>
