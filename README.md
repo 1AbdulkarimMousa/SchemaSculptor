@@ -18,7 +18,7 @@ Finally, as LLM coding models gain traction in the industry, and as unexperience
 
 - PostgreSQL installed and running
 - Go installed (1.18+)
-- `sudo` access (for database operations)
+- Access to a Postgresql Server 
 
 ## Getting Started
 
