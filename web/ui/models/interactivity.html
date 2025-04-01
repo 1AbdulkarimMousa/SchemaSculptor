@@ -1,0 +1,59 @@
+<div class="card">
+    <div class="card-header bg-dark text-white">
+        <h5 class="mb-0">Interactivity</h5>
+    </div>
+    <div class="card-body">
+        <div class="mb-3">
+            <textarea class="form-control" rows="4" placeholder="Define user interactions and logic..."></textarea>
+            <div class="form-text">Describe how users interact with your application</div>
+        </div>
+        <button class="btn btn-primary mb-4">Generate</button>
+        
+        <h5>Generated Code</h5>
+        <div class="border p-3 bg-light">
+<pre>// Load and display products
+async function loadProducts() {
+  try {
+    // Get products from API
+    const response = await api.getProducts();
+    const products = response.data;
+    
+    // Get the product list element
+    const productList = document.getElementById('product-list');
+    productList.innerHTML = '';
+    
+    // Add each product to the table
+    products.forEach(product => {
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        &lt;td&gt;${product.id}&lt;/td&gt;
+        &lt;td&gt;${product.name}&lt;/td&gt;
+        &lt;td&gt;$${product.price}&lt;/td&gt;
+        &lt;td&gt;${product.inStock ? 
+          '&lt;span class="badge bg-success"&gt;In Stock&lt;/span&gt;' : 
+          '&lt;span class="badge bg-danger"&gt;Out of Stock&lt;/span&gt;'}
+        &lt;/td&gt;
+      `;
+      productList.appendChild(row);
+    });
+  } catch (error) {
+    console.error('Error loading products:', error);
+  }
+}
+
+// Show product details
+async function showProduct(id) {
+  try {
+    const response = await api.getProduct(id);
+    const product = response.data;
+    
+    // Display product detail
+    const detailContainer = document.getElementById('product-detail');
+    detailContainer.innerHTML = ProductDetail(product);
+  } catch (error) {
+    console.error('Error loading product:', error);
+  }
+}</pre>
+        </div>
+    </div>
+</div>

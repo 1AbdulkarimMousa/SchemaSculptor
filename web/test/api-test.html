@@ -1,0 +1,84 @@
+<div class="card">
+    <div class="card-header bg-dark text-white">
+        <h5 class="mb-0">API Test</h5>
+    </div>
+    <div class="card-body">
+        <div class="mb-3">
+            <label class="form-label">Endpoint URL</label>
+            <div class="input-group">
+                <span class="input-group-text">/api/</span>
+                <input type="text" class="form-control" placeholder="products" value="products">
+                <button class="btn btn-primary">Send</button>
+            </div>
+            <div class="form-text">Test your API endpoints with mock data</div>
+        </div>
+        
+        <div class="row mb-3">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-light">
+                        <h6 class="mb-0">Request</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label">Method</label>
+                            <select class="form-select">
+                                <option>GET</option>
+                                <option>POST</option>
+                                <option>PUT</option>
+                                <option>DELETE</option>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Request Body</label>
+                            <textarea class="form-control" rows="5" placeholder="Enter JSON request body..."></textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-light">
+                        <h6 class="mb-0">Response</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label">Status</label>
+                            <input type="text" class="form-control" value="200 OK" readonly>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Response Body</label>
+                            <div class="border p-3 bg-light">
+<pre>{
+  "data": [
+    {
+      "id": 1,
+      "name": "Product 1",
+      "price": 99,
+      "inStock": true
+    },
+    {
+      "id": 2,
+      "name": "Product 2",
+      "price": 149,
+      "inStock": true
+    },
+    {
+      "id": 3,
+      "name": "Product 3",
+      "price": 199,
+      "inStock": false
+    }
+  ]
+}</pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

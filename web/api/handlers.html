@@ -1,0 +1,44 @@
+<div class="card">
+    <div class="card-header bg-dark text-white">
+        <h5 class="mb-0">API Handlers</h5>
+    </div>
+    <div class="card-body">
+        <div class="mb-3">
+            <textarea class="form-control" rows="4" placeholder="Define API endpoints and behavior..."></textarea>
+            <div class="form-text">Describe API endpoints and expected responses</div>
+        </div>
+        <button class="btn btn-primary mb-4">Generate</button>
+        
+        <h5>Generated Code</h5>
+        <div class="border p-3 bg-light">
+<pre>// Mock API handlers using axios
+const api = {
+  // Get all products
+  async getProducts() {
+    // Mock implementation
+    return {
+      data: [
+        { id: 1, name: "Product 1", price: 99, inStock: true },
+        { id: 2, name: "Product 2", price: 149, inStock: true },
+        { id: 3, name: "Product 3", price: 199, inStock: false }
+      ]
+    };
+    
+    // In real implementation:
+    // return axios.get('/api/products');
+  },
+  
+  // Get product by ID
+  async getProduct(id) {
+    // Mock implementation
+    return {
+      data: { id: id, name: "Product " + id, price: 99, inStock: true }
+    };
+    
+    // In real implementation:
+    // return axios.get(`/api/products/${id}`);
+  }
+};</pre>
+        </div>
+    </div>
+</div>

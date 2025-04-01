@@ -1,0 +1,187 @@
+<!-- Change Log Tab -->
+<div class="card shadow mb-4" x-data="changeLogData">
+    <div class="card-header py-3 d-flex justify-content-between align-items-center">
+        <h5 class="m-0 font-weight-bold text-primary">
+            <i class="bi bi-clock-history me-2"></i>Change Log
+        </h5>
+        <button class="btn btn-sm btn-primary" @click="addNewEntry()">
+            <i class="bi bi-plus-circle me-1"></i>New Entry
+        </button>
+    </div>
+    <div class="card-body">
+        <!-- Changelog Filters -->
+        <div class="mb-4">
+            <div class="row g-3 align-items-center">
+                <div class="col-md-3">
+                    <label for="versionFilter" class="form-label">Version:</label>
+                    <select class="form-select" id="versionFilter" x-model="versionFilter">
+                        <option value="">All Versions</option>
+                        <template x-for="version in versions" :key="version">
+                            <option :value="version" x-text="version"></option>
+                        </template>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="typeFilter" class="form-label">Type:</label>
+                    <select class="form-select" id="typeFilter" x-model="typeFilter">
+                        <option value="">All Types</option>
+                        <option value="feature">Features</option>
+                        <option value="bugfix">Bug Fixes</option>
+                        <option value="improvement">Improvements</option>
+                        <option value="security">Security</option>
+                        <option value="deprecation">Deprecations</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="componentFilter" class="form-label">Component:</label>
+                    <select class="form-select" id="componentFilter" x-model="componentFilter">
+                        <option value="">All Components</option>
+                        <template x-for="component in components" :key="component">
+                            <option :value="component" x-text="component"></option>
+                        </template>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="searchChangelog" class="form-label">Search:</label>
+                    <input type="text" class="form-control" id="searchChangelog" placeholder="Search entries..." x-model="searchTerm">
+                </div>
+            </div>
+        </div>
+        
+        <!-- Timeline View -->
+        <div class="position-relative">
+            <!-- Timeline line -->
+            <div class="position-absolute" style="top: 0; bottom: 0; left: 20px; width: 2px; background-color: #ddd;"></div>
+            
+            <!-- Version blocks -->
+            <template x-for="(versionGroup, vIndex) in filteredGroupedEntries" :key="versionGroup.version">
+                <div class="mb-5">
+                    <div class="d-flex align-items-center mb-3">
+                        <div class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center" style="width: 40px; height: 40px; z-index: 1;">
+                            <i class="bi bi-tag-fill"></i>
+                        </div>
+                        <h5 class="ms-3 mb-0" x-text="'Version ' + versionGroup.version"></h5>
+                        <span class="badge bg-secondary ms-2" x-text="versionGroup.releaseDate"></span>
+                        <span class="badge bg-info ms-2" x-text="versionGroup.entries.length + ' changes'"></span>
+                    </div>
+                    
+                    <!-- Change entries -->
+                    <div class="ms-5">
+                        <template x-for="(entry, eIndex) in versionGroup.entries" :key="entry.id">
+                            <div class="card mb-3" :class="{'border-primary': selectedEntry && selectedEntry.id === entry.id}">
+                                <div class="card-header d-flex justify-content-between align-items-center py-2" :class="{
+                                    'bg-success text-white': entry.type === 'feature',
+                                    'bg-danger text-white': entry.type === 'bugfix',
+                                    'bg-info text-white': entry.type === 'improvement',
+                                    'bg-warning': entry.type === 'security',
+                                    'bg-secondary text-white': entry.type === 'deprecation'
+                                }">
+                                    <div>
+                                        <span class="fw-bold" x-text="formatChangeType(entry.type)"></span>
+                                        <span class="ms-2" x-text="'[' + entry.component + ']'"></span>
+                                    </div>
+                                    <div>
+                                        <button class="btn btn-sm" :class="entry.type === 'warning' ? 'btn-dark' : 'btn-light'" @click="editEntry(entry)">
+                                            <i class="bi bi-pencil"></i>
+                                        </button>
+                                        <button class="btn btn-sm" :class="entry.type === 'warning' ? 'btn-dark' : 'btn-light'" @click="deleteEntry(entry)">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="card-body py-2">
+                                    <p class="card-text" x-text="entry.description"></p>
+                                    <div x-show="entry.details" class="mt-2">
+                                        <button class="btn btn-sm btn-link p-0" @click="toggleDetails(entry)">
+                                            <span x-text="entry.showDetails ? 'Hide Details' : 'Show Details'"></span>
+                                            <i class="bi" :class="entry.showDetails ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
+                                        </button>
+                                        <div x-show="entry.showDetails" class="mt-2 border-top pt-2">
+                                            <div x-html="renderMarkdown(entry.details)"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="card-footer d-flex justify-content-between py-1 text-muted small">
+                                    <span x-text="'By: ' + entry.author"></span>
+                                    <span x-text="entry.date"></span>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </template>
+            
+            <div x-show="filteredEntries.length === 0" class="text-center py-5">
+                <i class="bi bi-search fs-1 text-muted"></i>
+                <p class="mt-3">No change log entries match your filter criteria.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Change Log Entry Modal -->
+<div class="modal fade" id="changeLogModal" tabindex="-1" aria-hidden="true" x-ref="changeLogModal">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="changeLogModalLabel" x-text="editMode ? 'Edit Change Log Entry' : 'New Change Log Entry'"></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="entryVersion" class="form-label">Version</label>
+                            <input type="text" class="form-control" id="entryVersion" x-model="entryForm.version">
+                        </div>
+                        <div class="col-md-6">
+                            <label for="entryDate" class="form-label">Date</label>
+                            <input type="date" class="form-control" id="entryDate" x-model="entryForm.date">
+                        </div>
+                    </div>
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="entryType" class="form-label">Type</label>
+                            <select class="form-select" id="entryType" x-model="entryForm.type">
+                                <option value="feature">Feature</option>
+                                <option value="bugfix">Bug Fix</option>
+                                <option value="improvement">Improvement</option>
+                                <option value="security">Security</option>
+                                <option value="deprecation">Deprecation</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="entryComponent" class="form-label">Component</label>
+                            <input type="text" class="form-control" id="entryComponent" x-model="entryForm.component" list="componentsList">
+                            <datalist id="componentsList">
+                                <template x-for="component in components" :key="component">
+                                    <option :value="component"></option>
+                                </template>
+                            </datalist>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="entryDescription" class="form-label">Description</label>
+                        <input type="text" class="form-control" id="entryDescription" x-model="entryForm.description">
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="entryDetails" class="form-label">Details (Markdown)</label>
+                        <textarea class="form-control" id="entryDetails" rows="5" x-model="entryForm.details"></textarea>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="entryAuthor" class="form-label">Author</label>
+                        <input type="text" class="form-control" id="entryAuthor" x-model="entryForm.author">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" @click="saveEntry()">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
