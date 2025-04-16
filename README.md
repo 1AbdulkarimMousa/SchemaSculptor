@@ -1,3 +1,6 @@
+# Status 
+Project is still under constructions.
+
 # Introduction
 
 Throughout my career, I’ve worked on many projects and encountered a wide range of authentication methods, queue implementations, and message broker technologies across different programming languages. I’ve explored various ways to interact with databases—from hardcoding queries to complex query builders, safe ORMs, escaping techniques for preventing injection attacks, and basic driver setups. As a result, my technical debt has become quite significant, almost like Mount Everest. To stay future-proof and avoid the hassle of maintaining multiple versions of the same implementation across different technologies (a lesson learned from managing my technical debt), I’ve decided to focus on Golang and PostgreSQL moving forward. While I have respect for C++ and Rust, I find Golang to be the most appealing choice for my future projects.
